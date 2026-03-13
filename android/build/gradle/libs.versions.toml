@@ -1,8 +1,8 @@
 [versions]
 
-agp = "9.0.0"
+agp = "9.0.1"
 xr = "1.1.57"
-json = "1.9.0"
+json = "1.10.0"
 
 [plugins]
 

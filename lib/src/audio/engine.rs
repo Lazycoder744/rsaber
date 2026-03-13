@@ -7,13 +7,30 @@ use std::thread;
 
 use atomic::{Atomic, Ordering};
 use bytemuck::NoUninit;
-
-use cpal::{BufferSize, Device, SampleFormat, SampleRate, Stream, StreamConfig};
+use cfg_if::cfg_if;
+use cpal::{BufferSize, Device, HostId, SampleFormat, Stream, StreamConfig};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+use crate::simd::{self, Simd, WithSimd};
 
 const CHANNELS: u16 = 2;
 const MIN_SAMPLE_RATE: u32 = 44100;
 const LATENCY: f32 = 0.01; // [s]
+
+cfg_if! {
+    // We need to hardcode supported audio hosts, since rsaber_hackedcpal is not
+    // ported to all available hosts supported by cpal.
+
+    if #[cfg(target_os = "android")] {
+        const HOST_ID: HostId = HostId::AAudio;
+    } else if #[cfg(target_os = "linux")] {
+        const HOST_ID: HostId = HostId::PipeWire;
+    } else if #[cfg(target_os = "windows")] {
+        const HOST_ID: HostId = HostId::Wasapi;
+    } else {
+        compile_error!("Unsupported OS");
+    }
+}
 
 pub trait AudioInput {
     type Source: AudioSource + Send;
@@ -56,7 +73,7 @@ struct SourceInfo {
 impl AudioEngine {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let host = cpal::default_host();
+        let host = cpal::host_from_id(HOST_ID).expect("Unable to open audio host");
         let device = host.default_output_device().expect("Unable to determine default audio device");
 
         // Range selection criteria:
@@ -65,19 +82,19 @@ impl AudioEngine {
 
         let all_ranges: Vec<_> = device.supported_output_configs().expect("Unable to determine supported formats").filter(|range| range.channels() == CHANNELS && range.sample_format() == SampleFormat::F32).collect();
 
-        let mut ranges: Vec<_> = all_ranges.iter().filter(|range| range.min_sample_rate().0 <= MIN_SAMPLE_RATE && range.max_sample_rate().0 >= MIN_SAMPLE_RATE).collect();
+        let mut ranges: Vec<_> = all_ranges.iter().filter(|range| range.min_sample_rate() <= MIN_SAMPLE_RATE && range.max_sample_rate() >= MIN_SAMPLE_RATE).collect();
         let (range, sample_rate) = if !ranges.is_empty() {
             (ranges[0], MIN_SAMPLE_RATE)
         } else {
-            ranges = all_ranges.iter().filter(|range| range.min_sample_rate().0 >= MIN_SAMPLE_RATE).collect();
-            ranges.sort_by_key(|range| range.min_sample_rate().0);
+            ranges = all_ranges.iter().filter(|range| range.min_sample_rate() >= MIN_SAMPLE_RATE).collect();
+            ranges.sort_by_key(|range| range.min_sample_rate());
             let range = ranges.first().expect("No supported format");
 
-            (*range, range.min_sample_rate().0)
+            (*range, range.min_sample_rate())
         };
   
-        let mut config: StreamConfig = range.with_sample_rate(SampleRate(sample_rate)).config();
-        config.buffer_size = BufferSize::Fixed((config.sample_rate.0 as f32 * LATENCY) as u32); // TODO: hardcoded bufsize, determine it from device capabilities?
+        let mut config: StreamConfig = range.with_sample_rate(sample_rate).config();
+        config.buffer_size = BufferSize::Fixed((config.sample_rate as f32 * LATENCY) as u32); // TODO: hardcoded bufsize, determine it from device capabilities?
 
         // Construct inner.
 
@@ -108,13 +125,14 @@ impl AudioEngine {
         // TODO: how can we determine the size of the buffer, since cpal can't guarantee requested
         // buffer size?
 
-        let sample_rate = config.sample_rate.0;
+        let sample_rate = config.sample_rate;
         let mut source_buf = Vec::from_iter(iter::repeat_n(0.0, CHANNELS as usize * sample_rate as usize));
         let mut frame_count = 0_u64;
+        let simd_arch = simd::get_simd_arch();
 
         // Build output stream.
 
-        device.build_output_stream(config, move |buf: &mut [f32], _| { // TODO: use simd for processing
+        device.build_output_stream(*config, move |buf: &mut [f32], _| {
             let buf_len = buf.len();
             assert!(buf_len <= source_buf.len());
             let source_buf_sl = &mut source_buf.as_mut_slice()[..buf_len];
@@ -165,9 +183,7 @@ impl AudioEngine {
                             }
 
                             // TODO: scale output depending on the number of active sources.
-                            for (src_sample, dst_sample) in source_buf_sl.iter().zip(buf.iter_mut()) {
-                                *dst_sample += *src_sample;
-                            }
+                            simd_arch.dispatch(SimdMix(source_buf_sl, buf));
 
                             i += 1;
                         },
@@ -190,7 +206,7 @@ impl AudioEngine {
         // the render thread. For example: before playing, the factory function is
         // doing some buffering.
 
-        let sample_rate = self.config.sample_rate.0;
+        let sample_rate = self.config.sample_rate;
 
         let pos = AudioPos {
             start: 0,
@@ -276,4 +292,24 @@ struct AudioPos {
     start: u64,
     end: u64,
     offset: u64,
+}
+
+struct SimdMix<'a>(&'a [f32], &'a mut [f32]);
+
+impl<'a> WithSimd for SimdMix<'a> {
+    type Output = ();
+
+    #[inline(always)]
+    fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
+        let (src_head, src_tail) = S::as_simd_f32s(self.0);
+        let (dst_head, dst_tail) = S::as_mut_simd_f32s(self.1);
+
+        for (src, dst) in src_head.iter().zip(dst_head.iter_mut()) {
+            *dst = simd.add_f32s(*src, *dst);
+        }
+
+        for (src, dst) in src_tail.iter().zip(dst_tail.iter_mut()) {
+            *dst += *src;
+        }
+    }
 }

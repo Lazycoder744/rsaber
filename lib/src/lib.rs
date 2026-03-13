@@ -1,7 +1,14 @@
 // TODO: run rustfmt
-// TODO: re-export common libs, e.g. openxr, wgpu? -> targets don't need them as dependency in Cargo.toml
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
+
+// Re-export crates, so targets don't need them specified in their Cargo.toml.
+
+pub use cgmath;
+pub use wgpu;
+
+#[cfg(feature = "xr")]
+pub use openxr;
 
 pub mod asset;
 use asset::AssetManagerTrait;
@@ -25,6 +32,8 @@ use render::Render;
 
 pub mod scene;
 use scene::SceneInput;
+
+mod simd;
 
 mod songdef;
 

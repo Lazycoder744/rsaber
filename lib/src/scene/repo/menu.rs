@@ -11,8 +11,9 @@ use crate::audio::{AudioEngineRc, AudioFader, AudioFaderHandle, AudioFile, Audio
 use crate::mailbox::{self, Receiver, TryRecvError};
 use crate::model::*;
 use crate::net::{AssetFileRequest, BeatSaverSearchRequest, ImageRequest, NetManager, SongZipRequest};
+use crate::output::OutputInfoRc;
 use crate::scene::{GameParam, Scene, SceneFactory, SceneInput, SceneManager, create_floor, create_saber, create_stats_window};
-use crate::songdef::SongDifficulty;
+use crate::songdef::{CHAR_STANDARD, SongDifficulty};
 use crate::songinfo::{SongInfo, ColorScheme};
 use crate::ui::{AboutWindow, PoweredByWindow, SearchWindow, SearchWindowItem, SearchWindowMode, UILoop, VirtualKeyboardWindow};
 use crate::ui::slintimpl::{self, ComponentHandle as slintimpl_ComponentHandle, Model as slintimpl_Model, WindowUtil as slintimpl_WindowUtil};
@@ -20,7 +21,6 @@ use crate::util::StatsRc;
 
 const POINTER_COLOR: Color = Color([0.4, 0.4, 0.4]);
 const FADE_RATE: u8 = 80; // [dB/s]
-const STANDARD: &str = "Standard";
 
 pub struct MenuParam;
 
@@ -36,8 +36,8 @@ impl SceneFactory for MenuParam {
     type Scene = Menu;
     type Error = ();
 
-    fn load(self, asset_mgr: AssetManagerRc, model_reg: &mut ModelRegistry, stats: StatsRc, audio_engine: AudioEngineRc, ui_loop: &UILoop, net_manager: &NetManager) -> Result<Self::Scene, Self::Error> {
-        Menu::new(self, asset_mgr, model_reg, stats, audio_engine, ui_loop, net_manager)
+    fn load(self, asset_mgr: AssetManagerRc, model_reg: &mut ModelRegistry, output_info: OutputInfoRc, stats: StatsRc, audio_engine: AudioEngineRc, ui_loop: &UILoop, net_manager: &NetManager) -> Result<Self::Scene, Self::Error> {
+        Menu::new(self, asset_mgr, model_reg, output_info, stats, audio_engine, ui_loop, net_manager)
     }
 }
 
@@ -105,7 +105,8 @@ enum UpdateItemOp {
 }
 
 impl Menu {
-    fn new(_param: MenuParam, asset_mgr: AssetManagerRc, model_reg: &mut ModelRegistry, stats: StatsRc, audio_engine: AudioEngineRc, ui_loop: &UILoop, net_manager: &NetManager) -> Result<Self, ()> {
+    #[allow(clippy::too_many_arguments)]
+    fn new(_param: MenuParam, asset_mgr: AssetManagerRc, model_reg: &mut ModelRegistry, output_info: OutputInfoRc, stats: StatsRc, audio_engine: AudioEngineRc, ui_loop: &UILoop, net_manager: &NetManager) -> Result<Self, ()> {
         // Implementation notes:
         // - Weak window references in event handlers (on_*):
         //   - If a weak reference to its parent window is unwrapped (window_weak.unwrap()),
@@ -180,11 +181,19 @@ impl Menu {
         vkbd_window.set_pos(&Vector3::new(0.0, 3.0, 0.75));
         vkbd_window.set_rot(&Quaternion::from_angle_x(Deg(-45.0 / 2.0)));
 
-        // Setup about by window.
+        // Setup about by window. On some platforms, the diagnostic information is
+        // a multiline string, so put it into one single line.
 
-        let window_param = WindowParam::new(500, 500, || {
+        let diags: Vec<_> = output_info.get_diags().iter().map(|diag| diag.replace("\n", ", ").into()).collect();
+
+        let window_param = WindowParam::new(500, 500, move || {
             let window = AboutWindow::new().unwrap();
             window.set_version(APP_VERSION.clone().into());
+    
+            let diags_model = slintimpl::VecModel::default();
+            diags_model.set_vec(diags);
+
+            window.set_diags(slintimpl::ModelRc::new(diags_model));
 
             window
         });
@@ -279,7 +288,7 @@ impl Menu {
                                                 // Map difficulties.
 
                                                 let mut difficulties: Box<_> = version.get_variants().iter().filter_map(|variant| {
-                                                    if variant.get_characteristic() == STANDARD {
+                                                    if variant.get_characteristic() == CHAR_STANDARD {
                                                         Some(variant.get_difficulty())
                                                     } else {
                                                         None
@@ -609,7 +618,7 @@ impl Menu {
                                             Ok(song_info) => {
                                                 let beatmap_infos = song_info.get_beatmap_infos();
                                                 
-                                                if let Some(beatmap_info_index) = beatmap_infos.iter().position(|beatmap_info| beatmap_info.get_characteristic() == STANDARD && beatmap_info.get_difficulty() == difficulty) {
+                                                if let Some(beatmap_info_index) = beatmap_infos.iter().position(|beatmap_info| beatmap_info.get_characteristic() == CHAR_STANDARD && beatmap_info.get_difficulty() == difficulty) {
                                                     search_window_tx.send(SearchMessage::GameStart(asset_mgr, song_info, beatmap_info_index)).unwrap();
                                                 } else {
                                                     e_opt = Some("No such characteristic/difficulty".to_string());

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use wgpu::{BindGroup, BindGroupLayout, BlendState, Buffer, BufferDescriptor, BufferSize, BufferUsages, ColorTargetState, ColorWrites, CompareFunction, DepthStencilState, Device, FragmentState, IndexFormat, MultisampleState, PipelineLayoutDescriptor, RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor, ShaderSource, VertexState};
 
 use crate::asset::AssetManagerRc;
-use crate::model::{InstGridBuf, InstPhongColorBuf, InstShaderImplType, InstShaderType, InstSimpleColorBuf, InstWindowBuf, Mesh};
+use crate::model::{InstGridBuf, InstPhongColorBuf, InstShaderImplType, InstShaderSize, InstShaderType, InstSimpleColorBuf, InstWindowBuf, Mesh};
 use crate::output::OutputInfoRc;
 use crate::ui::UIManagerRc;
 use crate::util::StatsRc;
@@ -36,19 +36,19 @@ pub trait ModelFactory {
 }
 
 pub trait Model {
-    fn fill_simple_color(&self, _inst_index: u32, _inst_sh_buf: &mut InstSimpleColorBuf) {
+    fn fill_simple_color(&self, _inst_index: u32) -> InstSimpleColorBuf {
         panic!("Method is not implemented");
     }
 
-    fn fill_phong_color(&self, _inst_index: u32, _inst_sh_buf: &mut InstPhongColorBuf) {
+    fn fill_phong_color(&self, _inst_index: u32) -> InstPhongColorBuf {
         panic!("Method is not implemented");
     }
 
-    fn fill_grid(&self, _inst_index: u32, _inst_sh_buf: &mut InstGridBuf) {
+    fn fill_grid(&self, _inst_index: u32) -> InstGridBuf {
         panic!("Method is not implemented");
     }
 
-    fn fill_window(&self, _inst_index: u32, _inst_sh_buf: &mut InstWindowBuf) {
+    fn fill_window(&self, _inst_index: u32) -> InstWindowBuf {
         panic!("Method is not implemented");
     }
 }
@@ -205,11 +205,11 @@ impl ModelRenderer {
 
                 let (bg_layout_opt, pipeline_layout) = pipeline_layouts.entry(pipeline_layout_key.clone()).or_insert_with(|| {
                     let mut bg_layouts = Vec::new();
-                    bg_layouts.push(uni_bg_layout);
+                    bg_layouts.push(Some(uni_bg_layout));
 
                     let bg_layout_opt = inst_sh_impl.create_bind_group_layout(device);
                     if let Some(bg_layout) = &bg_layout_opt {
-                        bg_layouts.push(bg_layout);
+                        bg_layouts.push(Some(bg_layout));
                     }
 
                     let pipeline_layout = Rc::new(device.create_pipeline_layout(&PipelineLayoutDescriptor {
@@ -277,8 +277,8 @@ impl ModelRenderer {
                         primitive: primitive_st_type.get_primitive(),
                         depth_stencil: Some(DepthStencilState {
                             format: output_info.get_depth_format(),
-                            depth_write_enabled: true,
-                            depth_compare: CompareFunction::Less,
+                            depth_write_enabled: Some(true),
+                            depth_compare: Some(CompareFunction::Less),
                             stencil: Default::default(),
                             bias: Default::default(),
                         }),
@@ -340,34 +340,31 @@ impl ModelRenderer {
                     // Don't map full buffer, only the part which is large enough to hold the visible models.
 
                     let mut inst_buf_view = queue.write_buffer_with(inst_buf, 0, BufferSize::new(total_size).unwrap()).unwrap();
-                    let inst_buf_sl: &mut [u8] = &mut inst_buf_view;
 
-                    for (model_index, inst_sh_buf) in visible_model_indexes.iter().zip(inst_buf_sl.chunks_mut(inst_size as usize)) {
-                        let model = &render_info.models[*model_index as usize];
+                    macro_rules! fill_inst_buf {
+                        ($(($inst_sh_type:ident, $method:ident)),*) => {
+                            match submesh.get_inst_sh_type() {
+                                $(
+                                    InstShaderType::$inst_sh_type => {
+                                        let (inst_buf_arr, _) = inst_buf_view.slice(..).into_chunks::<{InstShaderSize::$inst_sh_type}>();
 
-                        match submesh.get_inst_sh_type() {
-                            InstShaderType::SimpleColor => {
-                                let inst_sh_buf: &mut [InstSimpleColorBuf] = bytemuck::cast_slice_mut(inst_sh_buf);
-                                let inst_sh_buf = &mut inst_sh_buf[0];
-                                model.fill_simple_color(inst_index, inst_sh_buf);
-                            },
-                            InstShaderType::PhongColor => {
-                                let inst_sh_buf: &mut [InstPhongColorBuf] = bytemuck::cast_slice_mut(inst_sh_buf);
-                                let inst_sh_buf = &mut inst_sh_buf[0];
-                                model.fill_phong_color(inst_index, inst_sh_buf);
-                            },
-                            InstShaderType::Grid => {
-                                let inst_sh_buf: &mut [InstGridBuf] = bytemuck::cast_slice_mut(inst_sh_buf);
-                                let inst_sh_buf = &mut inst_sh_buf[0];
-                                model.fill_grid(inst_index, inst_sh_buf);
-                            },
-                            InstShaderType::Window => {
-                                let inst_sh_buf: &mut [InstWindowBuf] = bytemuck::cast_slice_mut(inst_sh_buf);
-                                let inst_sh_buf = &mut inst_sh_buf[0];
-                                model.fill_window(inst_index, inst_sh_buf);
-                            },
+                                        inst_buf_arr.write_iter(visible_model_indexes.iter().map(|model_index| {
+                                            let model = &render_info.models[*model_index as usize];
+                                            let inst_buf_single = model.$method(inst_index);
+                                            bytemuck::cast(inst_buf_single)
+                                        }));
+                                    },
+                                )*
+                            }
                         }
                     }
+
+                    fill_inst_buf!(
+                        (SimpleColor, fill_simple_color),
+                        (PhongColor, fill_phong_color),
+                        (Grid, fill_grid),
+                        (Window, fill_window)
+                    );
 
                     if !mesh_bound {
                         render_pass.set_vertex_buffer(0, mesh.get_vertex_buf().slice(..)); // See VertexState->buffers[0].

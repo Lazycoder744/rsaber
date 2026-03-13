@@ -455,8 +455,8 @@ impl<C: ComponentHandle + 'static> IntComponentHandle for C {
     }
 }
 
-#[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct Rgba {
     r: u8,
     g: u8,

@@ -111,11 +111,11 @@ impl Pointer { // TODO: would be nice if we can integrate this one to saber mode
 }
 
 impl Model for Pointer {
-    fn fill_simple_color(&self, inst_index: u32, inst_sh_buf: &mut InstSimpleColorBuf) {
+    fn fill_simple_color(&self, inst_index: u32) -> InstSimpleColorBuf {
         assert!(inst_index == 0);
 
         let inner = self.inner.borrow();
         let model_m = Matrix4::from_translation(inner.pos) * Matrix4::from(inner.rot) * Matrix4::from_scale(inner.scale);
-        inst_sh_buf.fill(&self.param.color, &model_m);
+        InstSimpleColorBuf::fill(&self.param.color, &model_m)
     }
 }

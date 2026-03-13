@@ -96,7 +96,7 @@ impl Saber {
 }
 
 impl Model for Saber {
-    fn fill_phong_color(&self, inst_index: u32, inst_sh_buf: &mut InstPhongColorBuf) {
+    fn fill_phong_color(&self, inst_index: u32) -> InstPhongColorBuf {
         let (color, phong_param) = match inst_index {
             0 => (&self.param.handle_color, &self.param.handle_phong_param),
             1 => (&self.param.ray_color, &self.param.ray_phong_param),
@@ -105,6 +105,6 @@ impl Model for Saber {
 
         let inner = self.inner.borrow();
         let model_m = Matrix4::from_translation(inner.pos) * Matrix4::from(inner.rot);
-        inst_sh_buf.fill(color, phong_param, &model_m);
+        InstPhongColorBuf::fill(color, phong_param, &model_m)
     }
 }

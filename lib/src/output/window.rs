@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use cgmath::{Angle, Deg, InnerSpace, Matrix, Matrix3, Matrix4, Point3, Rad, Vector3};
-use wgpu::{CompositeAlphaMode, Device, DeviceDescriptor, Instance, PresentMode, Queue, RequestAdapterOptions, Surface, SurfaceConfiguration, SurfaceError, SurfaceTarget, SurfaceTexture, TextureFormat, TextureUsages, TextureView};
+use wgpu::{CompositeAlphaMode, CurrentSurfaceTexture, Device, DeviceDescriptor, Instance, InstanceDescriptor, PresentMode, Queue, RequestAdapterOptions, Surface, SurfaceConfiguration, SurfaceTarget, SurfaceTexture, TextureFormat, TextureUsages, TextureView};
 
 use crate::output::{DEPTH_FORMAT, NEAR_Z, FAR_Z, Frame, OutputInfo, ViewMat, create_texture, get_default_features, get_default_limits, get_sample_count};
 
@@ -15,6 +15,7 @@ pub struct WindowOutput {
     surface: Surface<'static>,
     color_format: TextureFormat,
     sample_count: u32,
+    diags: Vec<String>,
     inner: RefCell<Inner>,
 }
 
@@ -24,8 +25,10 @@ struct Inner {
 }
 
 impl WindowOutput {
-    pub async fn new(surface_target: SurfaceTarget<'static>) -> Self {
-        let instance = Instance::new(&Default::default());
+    // Do not include any winit dependency into WindowOutput.
+
+    pub async fn new(instance_descr: InstanceDescriptor, surface_target: SurfaceTarget<'static>) -> Self {
+        let instance = Instance::new(instance_descr);
         let surface = instance.create_surface(surface_target).expect("Unable to create render surface");
 
         let adapter_opt = RequestAdapterOptions {
@@ -44,6 +47,12 @@ impl WindowOutput {
             ..Default::default()
         };
         let (device, queue) = adapter.request_device(&device_desc).await.expect("Unable to request device");
+
+        let adapter_info = device.adapter_info();
+        let diags = vec![
+            format!("Adapter: {}", adapter_info.name),
+            format!("Driver: {}/{}", adapter_info.driver, adapter_info.driver_info),
+        ];
 
         let surface_caps = surface.get_capabilities(&adapter);
         let color_format = *surface_caps.formats.iter().find(|format| format.is_srgb()).expect("Missing sRGB texture format");
@@ -67,6 +76,7 @@ impl WindowOutput {
             surface,
             color_format,
             sample_count,
+            diags,
             inner: RefCell::new(Inner {
                 surface_config,
                 view_obj: None,
@@ -75,7 +85,7 @@ impl WindowOutput {
     }
 
     pub fn get_info(&self) -> OutputInfo { // TODO: prepare it it new and don't create new instance everytime?
-        OutputInfo::new(&self.device, &self.queue, self.color_format, DEPTH_FORMAT, self.sample_count, 1, "", "0")
+        OutputInfo::new(&self.device, &self.queue, self.color_format, DEPTH_FORMAT, self.sample_count, 1, "", "0", &self.diags)
     }
 
     pub fn resize(&self, width: u32, height: u32) {
@@ -113,12 +123,13 @@ impl WindowOutput {
 
         let (multisample_view, depth_view) = match &inner.view_obj {
             Some(view_obj) => view_obj.clone(),
-            None => return WindowBegin::NotInited,
+            None => return WindowBegin::Skip,
         };
         
         let surface_texture = match self.surface.get_current_texture() {
-            Ok(surface_texture) => surface_texture,
-            Err(SurfaceError::Lost | SurfaceError::Outdated) => return WindowBegin::ResizeNeeded,
+            CurrentSurfaceTexture::Success(surface_texture) => surface_texture,
+            CurrentSurfaceTexture::Occluded | CurrentSurfaceTexture::Timeout => return WindowBegin::Skip,
+            CurrentSurfaceTexture::Suboptimal(_) | CurrentSurfaceTexture::Lost | CurrentSurfaceTexture::Outdated => return WindowBegin::ResizeNeeded,
             _ => panic!("Surface error"),
         };
 
@@ -142,7 +153,7 @@ impl WindowOutput {
 
 #[allow(clippy::large_enum_variant)]
 pub enum WindowBegin {
-    NotInited,
+    Skip,
     ResizeNeeded,
     Frame(WindowFrame),
 }
@@ -187,6 +198,8 @@ impl WindowFrame {
 }
 
 impl Frame for WindowFrame {
+    type OutputViewMat = OutputViewMat;
+
     fn get_color_view(&self) -> &TextureView {
         &self.color_view
     }
@@ -203,10 +216,8 @@ impl Frame for WindowFrame {
         self.cam_pos
     }
 
-    fn set_view_m(&self, buf: &mut [u8]) {
-        let buf_sl: &mut [OutputViewMat] = bytemuck::cast_slice_mut(buf);
-        let view_m = &mut buf_sl[0];
-        *view_m = self.view_m;
+    fn get_view_m(&self) -> Self::OutputViewMat {
+        self.view_m
     }
 
     fn end(self) {

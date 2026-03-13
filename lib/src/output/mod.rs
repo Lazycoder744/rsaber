@@ -2,6 +2,7 @@ use std::cmp::Reverse;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 
+use bytemuck::NoUninit;
 use cfg_if::cfg_if;
 use cgmath::Vector3;
 use wgpu::{Adapter, Device, Extent3d, Features, Limits, Queue, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView};
@@ -38,11 +39,12 @@ pub struct OutputInfo {
     view_len: u32,
     view_index_def: String,
     view_index_val: String,
+    diags: Vec<String>,
 }
 
 impl OutputInfo {
     #[allow(clippy::too_many_arguments)]
-    fn new<S: AsRef<str>>(device: &Device, queue: &Queue, color_format: TextureFormat, depth_format: TextureFormat, sample_count: u32, view_len: u32, view_index_def: S, view_index_val: S) -> Self {
+    fn new<S: AsRef<str>>(device: &Device, queue: &Queue, color_format: TextureFormat, depth_format: TextureFormat, sample_count: u32, view_len: u32, view_index_def: S, view_index_val: S, diags: &[String]) -> Self {
         assert!(sample_count > 0);
         assert!(view_len > 0);
 
@@ -55,6 +57,7 @@ impl OutputInfo {
             view_len,
             view_index_def: view_index_def.as_ref().to_string(),
             view_index_val: view_index_val.as_ref().to_string(),
+            diags: Vec::from(diags),
         }
     }
 
@@ -93,14 +96,20 @@ impl OutputInfo {
     pub fn get_view_index_val(&self) -> &str {
         &self.view_index_val
     }
+
+    pub fn get_diags(&self) -> &[String] {
+        &self.diags
+    }
 }
 
 pub trait Frame {
+    type OutputViewMat: NoUninit;
+
     fn get_color_view(&self) -> &TextureView;
     fn get_multisample_view(&self) -> Option<&TextureView>;
     fn get_depth_view(&self) -> &TextureView;
     fn get_cam_pos(&self) -> Vector3<f32>; // TODO: For stereo rendering, is a single cam_pos (used for lighting calcs) sufficient? // TODO: return with &?
-    fn set_view_m(&self, buf: &mut [u8]);
+    fn get_view_m(&self) -> Self::OutputViewMat;
     fn end(self);
 }
 

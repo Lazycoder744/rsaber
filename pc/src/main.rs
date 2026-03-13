@@ -2,9 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
-use cgmath::{Deg, InnerSpace, Matrix3, Quaternion, Rotation3, Vector3};
 use pollster::FutureExt;
-use wgpu::SurfaceTarget;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
@@ -14,9 +12,11 @@ use winit::window::{Window, WindowId};
 
 use rsaber_lib::{APP_NAME, Main};
 use rsaber_lib::asset::EmbedAssetManager;
+use rsaber_lib::cgmath::{Deg, InnerSpace, Matrix3, Quaternion, Rotation3, Vector3};
 use rsaber_lib::output::{WindowBegin, WindowOutput};
 use rsaber_lib::scene::{SceneInput, ScenePose, ScenePoseScroll};
 use rsaber_lib::util::Stats;
+use rsaber_lib::wgpu::{InstanceDescriptor, SurfaceTarget};
 
 const COMMENT: &str = "You can use keys w-a-s-d to move, z-x to change elevation, r to reset view and arrow keys to rotate camera. Interaction with UI controls can be done with mouse.";
 
@@ -24,7 +24,8 @@ const MIN_SIZE: PhysicalSize<u32> = PhysicalSize { width: 800, height: 600 };
 const DEFAULT_POS: Vector3<f32> = Vector3::new(0.0, -2.5, 1.8); // TODO: configurable height
 const ROT_SPEED: f32 = 50.0; // [deg/s]
 const MOVE_SPEED: f32 = 5.0; // [m/s]
-const SCROLL_SPEED: f32 = 30.0; // [pixels/event]
+const SCROLL_LINE_SPEED: f32 = 30.0; // [pixels/line]
+const SCROLL_PIXEL_FACTOR: f32 = 5.0;
 
 struct App {
     asset_mgr: Option<EmbedAssetManager>,
@@ -66,7 +67,7 @@ impl ApplicationHandler for App {
                 .with_min_inner_size(MIN_SIZE);
 
             let window = Arc::new(event_loop.create_window(window_attrs).expect("Unable to create window"));
-            let output = WindowOutput::new(SurfaceTarget::from(Arc::clone(&window))).block_on();
+            let output = WindowOutput::new(InstanceDescriptor::new_with_display_handle(Box::new(event_loop.owned_display_handle())), SurfaceTarget::from(Arc::clone(&window))).block_on();
             let stats = Stats::new(COMMENT);
             let main = Main::new(self.asset_mgr.take().unwrap(), output.get_info(), stats);
 
@@ -208,7 +209,7 @@ impl ApplicationHandler for App {
                 let dir = Quaternion::from_angle_z(Deg(*yaw)) * Quaternion::from_angle_x(Deg(*pitch)) * Vector3::unit_y();
 
                 match output.begin(pos, &dir) {
-                    WindowBegin::NotInited => (),
+                    WindowBegin::Skip => (),
                     WindowBegin::ResizeNeeded => output.resize(size.width, size.height),
                     WindowBegin::Frame(frame) => {
                         let mut scene_input = SceneInput {
@@ -282,8 +283,11 @@ impl ApplicationHandler for App {
                 }
             },
             WindowEvent::MouseWheel { delta, phase, .. } => {
-                if let MouseScrollDelta::LineDelta(scroll_x, scroll_y) = delta && matches!(phase, TouchPhase::Moved) {
-                    *cursor_scroll = (SCROLL_SPEED * scroll_x, SCROLL_SPEED * scroll_y);
+                if matches!(phase, TouchPhase::Moved) {
+                    *cursor_scroll = match delta {
+                        MouseScrollDelta::LineDelta(scroll_x, scroll_y) => (SCROLL_LINE_SPEED * scroll_x, SCROLL_LINE_SPEED * scroll_y),
+                        MouseScrollDelta::PixelDelta(scroll) => (SCROLL_PIXEL_FACTOR * scroll.x as f32, SCROLL_PIXEL_FACTOR * scroll.y as f32),
+                    }
                 }
             },
             WindowEvent::CloseRequested => {

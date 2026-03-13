@@ -171,9 +171,11 @@ pub struct InstSimpleColorBuf {
 }
 
 impl InstSimpleColorBuf {
-    pub fn fill(&mut self, color: &Color, model_m: &Matrix4<f32>) {
-        self.color = *color;
-        self.model_m = (*model_m).into();
+    pub fn fill(color: &Color, model_m: &Matrix4<f32>) -> Self {
+        Self {
+            color: *color,
+            model_m: (*model_m).into(),
+        }
     }
 }
 
@@ -232,10 +234,12 @@ pub struct InstPhongColorBuf {
 }
 
 impl InstPhongColorBuf {
-    pub fn fill(&mut self, color: &Color, phong_param: &PhongParam, model_m: &Matrix4<f32>) {
-        self.color = *color;
-        self.phong_param = *phong_param;
-        self.model_m = (*model_m).into();
+    pub fn fill(color: &Color, phong_param: &PhongParam, model_m: &Matrix4<f32>) -> Self {
+        Self {
+            color: *color,
+            phong_param: *phong_param,
+            model_m: (*model_m).into(),
+        }
     }
 }
 
@@ -272,9 +276,11 @@ pub struct InstGridBuf {
 }
 
 impl InstGridBuf {
-    pub fn fill(&mut self, color: &Color, model_m: &Matrix4<f32>) {
-        self.color = *color;
-        self.model_m = (*model_m).into();
+    pub fn fill(color: &Color, model_m: &Matrix4<f32>) -> Self {
+        Self {
+            color: *color,
+            model_m: (*model_m).into(),
+        }
     }
 }
 
@@ -343,10 +349,23 @@ pub struct InstWindowBuf {
 }
 
 impl InstWindowBuf {
-    pub fn fill(&mut self, sampler_id: SamplerId, texture_id: TextureId, model_m: &Matrix4<f32>) {
-        self.bind_id = [sampler_id.0, texture_id.0];
-        self.model_m = (*model_m).into();
+    pub fn fill(sampler_id: SamplerId, texture_id: TextureId, model_m: &Matrix4<f32>) -> Self {
+        Self {
+            bind_id: [sampler_id.0, texture_id.0],
+            model_m: (*model_m).into(),
+        }
     }
+}
+
+#[allow(non_snake_case)]
+#[allow(non_upper_case_globals)]
+pub mod InstShaderSize {
+    use std::mem;
+
+    pub static SimpleColor: usize = mem::size_of::<super::InstSimpleColorBuf>();
+    pub static PhongColor: usize = mem::size_of::<super::InstPhongColorBuf>();
+    pub static Grid: usize = mem::size_of::<super::InstGridBuf>();
+    pub static Window: usize = mem::size_of::<super::InstWindowBuf>();
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -369,10 +388,10 @@ impl InstShaderType {
 
     pub fn get_layout(&self) -> VertexBufferLayout<'_> {
         let (array_stride, attributes) = match self {
-            InstShaderType::SimpleColor => (mem::size_of::<InstSimpleColorBuf>(), INST_SIMPLECOLOR_ATTRS.as_slice()),
-            InstShaderType::PhongColor => (mem::size_of::<InstPhongColorBuf>(), INST_PHONGCOLOR_ATTRS.as_slice()),
-            InstShaderType::Grid => (mem::size_of::<InstGridBuf>(), INST_GRID_ATTRS.as_slice()),
-            InstShaderType::Window => (mem::size_of::<InstWindowBuf>(), INST_WINDOW_ATTRS.as_slice()),
+            InstShaderType::SimpleColor => (InstShaderSize::SimpleColor, INST_SIMPLECOLOR_ATTRS.as_slice()),
+            InstShaderType::PhongColor => (InstShaderSize::PhongColor, INST_PHONGCOLOR_ATTRS.as_slice()),
+            InstShaderType::Grid => (InstShaderSize::Grid, INST_GRID_ATTRS.as_slice()),
+            InstShaderType::Window => (InstShaderSize::Window, INST_WINDOW_ATTRS.as_slice()),
         };
 
         VertexBufferLayout {

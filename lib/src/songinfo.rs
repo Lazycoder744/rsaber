@@ -16,6 +16,8 @@ use serde_json::{Error as json_Error, Value};
 use crate::asset::{AssetError, AssetManagerRc};
 use crate::model::Color;
 use crate::songdef::SongDifficulty;
+#[cfg(feature = "test")]
+use crate::songdef::CHAR_STANDARD;
 
 type Result<T> = result_Result<T, Error>;
 
@@ -209,7 +211,7 @@ impl BeatmapInfo {
     fn test(asset_mgr: AssetManagerRc) -> Self {
         Self {
             asset_mgr,
-            characteristic: "Standard".to_string(),
+            characteristic: CHAR_STANDARD.to_string(),
             difficulty: SongDifficulty::Easy,
             color_scheme_index_opt: None,
             def_color_scheme: ColorScheme::default(),

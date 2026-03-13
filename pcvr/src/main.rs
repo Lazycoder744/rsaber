@@ -1,5 +1,6 @@
 use rsaber_lib::Main;
 use rsaber_lib::asset::EmbedAssetManager;
+use rsaber_lib::openxr;
 use rsaber_lib::output::XROutput;
 use rsaber_lib::util::Stats;
 

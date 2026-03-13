@@ -7,24 +7,53 @@ As there are no built-in levels, they are fetched from https://beatsaver.com/.
 
 Screenshots
 
-<img src="doc/menu1.jpg" width="300" height="163">
-<img src="doc/menu2.jpg" width="300" height="163">
-<img src="doc/game1.jpg" width="300" height="163">
-<img src="doc/game2.jpg" width="300" height="163">
+<img src="https://raw.githubusercontent.com/bandipapa/rsaber/refs/tags/v0.5.0/doc/menu1.jpg" width="300" height="163">
+<img src="https://raw.githubusercontent.com/bandipapa/rsaber/refs/tags/v0.5.0/doc/menu2.jpg" width="300" height="163">
+<img src="https://raw.githubusercontent.com/bandipapa/rsaber/refs/tags/v0.5.0/doc/game1.jpg" width="300" height="163">
+<img src="https://raw.githubusercontent.com/bandipapa/rsaber/refs/tags/v0.5.0/doc/game2.jpg" width="300" height="163">
 
 ## Supported Devices
 
-| Subdirectory | Tested devices                                                                                                  |
-|--------------|-----------------------------------------------------------------------------------------------------------------|
-| android      | Meta Quest 2                                                                                                    |
-| pc           | Windows (runs in a window, useful for debugging)                                                                |
-| pcvr         | OpenXR (SteamVR): [Sony PlayStation VR2](https://www.playstation.com/en-us/support/hardware/pc-prepare-ps-vr2/) |
+<table>
+  <tr>
+    <th>Subdirectory</th>
+    <th>Tested devices</th>
+    <th><a href="https://github.com/bandipapa/rsaber/releases/">Pre-compiled binary</a></th>
+  </tr>
+
+  <tr>
+    <td>android</td>
+    <td>Meta Quest 2</td>
+    <td>rsaber_android.apk</td>
+  </tr>
+
+  <tr>
+    <td rowspan="2">pc (runs in a window, useful for debugging)</td>
+    <td>Linux</td>
+    <td>rsaber_pc_linux_x64</td>
+  </tr>
+
+  <tr>
+    <td>Windows</td>
+    <td>rsaber_pc_windows_x64.exe</td>
+  </tr>
+
+  <tr>
+    <td>pcvr</td>
+    <td>Windows (SteamVR/OpenXR): <a href="https://www.playstation.com/en-us/support/hardware/pc-prepare-ps-vr2/">Sony PlayStation VR2</a></td>
+    <td>rsaber_pcvr_windows_x64.exe</td>
+  </tr>
+</table>
 
 Actually, any headset with OpenXR support + Vulkan API is supposed to work.
 
-## Download
+## Supported Audio Backends
 
-You can go to [releases](https://github.com/bandipapa/rsaber/releases/) to download pre-compiled binaries.
+| OS      | Backend  |
+|---------|----------|
+| Android | AAudio   |
+| Linux   | PipeWire |
+| Windows | Wasapi   |
 
 ## Build From Source
 
@@ -89,5 +118,4 @@ rsaber_pcvr
 
 ## TODO
 
-- Linux port (rsaber_hackedcpal)
 - Have the option to dump/read assets from local files (this is for modders who don't want to recompile)

@@ -25,7 +25,7 @@ struct Uni {
     _unused1: f32,
     cam_pos: [f32; 3],
     _unused2: f32,
-    // Rest is filled by Frame->set_view_m(). // TODO: Or have an additional, output-specific buffer?
+    // Rest is filled by Frame->get_view_m(). // TODO: Or have an additional, output-specific buffer?
 }
 
 pub struct Render {
@@ -156,17 +156,22 @@ impl Render {
 
         // Fill uniform buffer. From https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#method.write_buffer_with :
         // "Dropping the QueueWriteBufferView does not submit the transfer to the GPU immediately. The transfer begins only on the next call to Queue::submit() after the view is dropped, just before the explicitly submitted commands."
+        // TODO: Refactor it to be typesafe (e.g. Uni<Frame::OutputViewMat>)
 
         {
             let mut uni_buf_view = queue.write_buffer_with(&self.uni_buf, 0, BufferSize::new(self.uni_size).unwrap()).unwrap();
 
-            let uni_buf_sl: &mut [Uni] = bytemuck::cast_slice_mut(&mut uni_buf_view[..mem::size_of::<Uni>()]);
-            let uni = &mut uni_buf_sl[0];
-
+            let mut uni = Uni::zeroed();
             uni.light_pos = cgmath::Point3::new(0.0, -3.0, 3.0).into(); // TODO: where should we position the light?
             uni.cam_pos = frame.get_cam_pos().into();
 
-            frame.set_view_m(&mut uni_buf_view[mem::size_of::<Uni>()..]); // TODO: Refactor it to be typesafe?
+            let mut uni_buf_sl = uni_buf_view.slice(..mem::size_of::<Uni>());
+            uni_buf_sl.copy_from_slice(bytemuck::cast_slice(&[uni]));
+
+            let view_m = frame.get_view_m();
+            
+            let mut uni_buf_sl = uni_buf_view.slice(mem::size_of::<Uni>()..);
+            uni_buf_sl.copy_from_slice(bytemuck::cast_slice(&[view_m]));
         }
 
         // TODO: Use frame_time statistic to offset audio timestamp, moving average?

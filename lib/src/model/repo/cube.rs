@@ -182,7 +182,7 @@ impl Cube {
 }
 
 impl Model for Cube {
-    fn fill_phong_color(&self, inst_index: u32, inst_sh_buf: &mut InstPhongColorBuf) {
+    fn fill_phong_color(&self, inst_index: u32) -> InstPhongColorBuf {
         let (color, phong_param) = match inst_index {
             0 | 1 => (&self.param.body_color, &self.param.body_phong_param),
             2 | 3 => (&self.param.symbol_color, &self.param.symbol_phong_param),
@@ -201,6 +201,6 @@ impl Model for Cube {
         };
 
         let model_m = Matrix4::from_translation(pos) * Matrix4::from(rot) * Matrix4::from_scale(inner.scale);
-        inst_sh_buf.fill(color, phong_param, &model_m);
+        InstPhongColorBuf::fill(color, phong_param, &model_m)
     }
 }

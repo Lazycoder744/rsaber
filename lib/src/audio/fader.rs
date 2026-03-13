@@ -2,6 +2,7 @@ use std::ops::RangeInclusive;
 
 use crate::audio::{AudioInput, AudioSource, AudioSourceState};
 use crate::mailbox::{self, Receiver, Sender, TryRecvError};
+use crate::simd::{self, Simd, SimdArch, WithSimd};
 
 const LEVEL_RANGE: RangeInclusive<i8> = -90..=0; // 1/(2^15) =~ 10^(-90/20)
 
@@ -45,6 +46,7 @@ pub struct AudioFaderSource<T> {
     sample_rate: u32,
     level: i8, // [dB]
     state_opt: Option<State>,
+    simd_arch: SimdArch,
 }
 
 enum Command { // Rate [dB/s]
@@ -68,6 +70,7 @@ impl<T: AudioSource> AudioFaderSource<T> {
             sample_rate,
             level: *LEVEL_RANGE.end(), // Default: no fade.
             state_opt: None,
+            simd_arch: simd::get_simd_arch(),
         }
     }
 }
@@ -106,7 +109,7 @@ impl<T: AudioSource> AudioSource for AudioFaderSource<T> {
             AudioSourceState::Paused => {
                 AudioSourceState::Paused
             },
-            AudioSourceState::Playing => { // TODO: use simd for processing
+            AudioSourceState::Playing => {
                 let buf_len = buf.len();
                 let mut i: usize = 0;
 
@@ -129,9 +132,7 @@ impl<T: AudioSource> AudioSource for AudioFaderSource<T> {
                         let buf_sl = &mut buf[i..i + todo];
                         let level = 10_f32.powf(self.level as f32 / 20.0);
 
-                        for sample in buf_sl {
-                            *sample *= level;
-                        }
+                        self.simd_arch.dispatch(SimdFade(level, buf_sl));
 
                         state.samples_processed += todo;
                         if state.samples_per_db == state.samples_processed {
@@ -191,5 +192,27 @@ impl AudioFaderHandle {
 
     fn send(&self, cmd: Command) {
         let _ = self.tx.send(cmd); // Ignore if the source has been dropped.
+    }
+}
+
+struct SimdFade<'a>(f32, &'a mut [f32]);
+
+impl<'a> WithSimd for SimdFade<'a> {
+    type Output = ();
+
+    #[inline(always)]
+    fn with_simd<S: Simd>(self, simd: S) -> Self::Output {
+        let level = self.0;
+
+        let level_head = simd.splat_f32s(self.0);
+        let (sample_head, sample_tail) = S::as_mut_simd_f32s(self.1);
+
+        for sample in sample_head {
+            *sample = simd.mul_f32s(*sample, level_head);
+        }
+
+        for sample in sample_tail {
+            *sample *= level;
+        }
     }
 }

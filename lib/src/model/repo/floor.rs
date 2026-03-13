@@ -105,11 +105,11 @@ impl Floor {
 }
 
 impl Model for Floor {
-    fn fill_grid(&self, inst_index: u32, inst_sh_buf: &mut InstGridBuf) {
+    fn fill_grid(&self, inst_index: u32) -> InstGridBuf {
         assert!(inst_index == 0);
 
         let inner = self.inner.borrow();
         let model_m = Matrix4::from_translation(inner.pos);
-        inst_sh_buf.fill(&self.param.color, &model_m);
+        InstGridBuf::fill(&self.param.color, &model_m)
     }
 }

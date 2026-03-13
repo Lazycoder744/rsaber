@@ -1,12 +1,18 @@
 import { Const } from "Const.slint";
 import { WindowBase } from "WindowBase.slint";
 
+global LocalConst {
+    out property<length> diag-padding: 5px;
+    out property<length> diag-padding-top: 20px;
+}
+
 export component AboutWindow inherits WindowBase {
     default-font-family: Const.default-font-family;
     default-font-size: Const.default-font-size;
     background: Const.border-color;
 
     in property<string> version;
+    in property<[string]> diags;
 
     VerticalLayout { 
         Text {
@@ -26,15 +32,28 @@ export component AboutWindow inherits WindowBase {
             VerticalLayout {
                 width: rect.width - 2 * rect.border-width;
                 height: rect.height - 2 * rect.border-width;
-                alignment: space-evenly;
 
                 Image {
+                    vertical-stretch: 1;
                     source: @image-url("image/logo.png");
                 }
 
                 Text {
+                    vertical-stretch: 0;
                     text: root.version;
                     horizontal-alignment: center;
+                }
+
+                VerticalLayout {
+                    vertical-stretch: 0;
+                    padding: LocalConst.diag-padding;
+                    padding-top: LocalConst.diag-padding-top;
+
+                    for diag in root.diags : Text {
+                        font-size: 0.5 * Const.default-font-size;
+                        wrap: word-wrap;
+                        text: diag;
+                    }
                 }
             }
         }

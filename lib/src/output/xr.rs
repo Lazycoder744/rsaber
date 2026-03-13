@@ -18,6 +18,8 @@ use crate::output::{DEPTH_FORMAT, NEAR_Z, FAR_Z, Frame, OutputInfo, ViewMat, cre
 
 type OutputViewMat = [ViewMat; 2];
 
+const XR_VALVE_FRAME_CONTROLLER_INTERACTION_EXTENSION_NAME: &[u8] = b"XR_VALVE_frame_controller_interaction\0"; // See https://partner.steamgames.com/doc/steamframe/engines/custom .
+
 const WGPU_FORMATS: [TextureFormat; 2] = [TextureFormat::Bgra8UnormSrgb, TextureFormat::Rgba8UnormSrgb];
 const NOTRUNNING_SLEEP: f32 = 0.1; // [s]
 const MY_TO_OPENXR_M: Matrix4<f32> = Matrix4::new( // my -> openxr
@@ -39,6 +41,7 @@ pub struct XROutput {
     multisample_view: Option<TextureView>,
     width: u32,
     height: u32,
+    diags: Vec<String>,
     xr_session: openxr::Session<openxr::Vulkan>,
     inner: RefCell<Inner>,
     xr_space: openxr::Space,
@@ -47,8 +50,8 @@ pub struct XROutput {
     xr_right_space: openxr::Space,
     xr_left_click: openxr::Action<bool>,
     xr_right_click: openxr::Action<bool>,
-    xr_left_scroll_opt: Option<XRScroll>,
-    xr_right_scroll_opt: Option<XRScroll>,
+    xr_left_scroll: XRScroll,
+    xr_right_scroll: XRScroll,
     xr_left_haptic: openxr::Action<openxr::Haptic>,
     xr_right_haptic: openxr::Action<openxr::Haptic>,
     xr_inst: openxr::Instance,
@@ -91,9 +94,10 @@ struct XRScroll {
 
 #[allow(non_camel_case_types)]
 enum XRHardware {
+    Generic,
     Oculus_Quest2,
     Sony_PlayStationVR2,
-    Generic,
+    // TODO: Do we need tweaks for Valve_SteamFrame?
 }
 
 impl XROutput {
@@ -139,6 +143,14 @@ impl XROutput {
 
         if xr_ext_avail.fb_display_refresh_rate {
             xr_ext.fb_display_refresh_rate = true;
+        }
+
+        // For the time being, OpenXR rust binding doesn't support Steam Frame interaction
+        // profile extension natively, so we have to use ExtensionSet->other.
+        // TODO: On openxr upgrade, check if it is supporting extension.
+
+        if let Some(ext_name) = xr_ext_avail.other.iter().find(|ext_name| *ext_name == XR_VALVE_FRAME_CONTROLLER_INTERACTION_EXTENSION_NAME) {
+            xr_ext.other.push(ext_name.to_vec());
         }
 
         #[cfg(target_os = "android")]
@@ -322,7 +334,7 @@ impl XROutput {
             let drop_guard = Arc::clone(&drop_guard);
             Some(Box::new(move || { let _ = Arc::strong_count(&drop_guard); }))
         };
-        let wgpu_hal_dev = unsafe { wgpu_hal_adapter.adapter.device_from_raw(vk_dev.clone(), drop_callback, &wgpu_phys_exts, wgpu_features, &Default::default(), vk_queue_family_index, 0) }.expect("wgpu device_from_raw() failed");
+        let wgpu_hal_dev = unsafe { wgpu_hal_adapter.adapter.device_from_raw(vk_dev.clone(), drop_callback, &wgpu_phys_exts, wgpu_features, &Default::default(), &Default::default(), vk_queue_family_index, 0) }.expect("wgpu device_from_raw() failed");
         
         let wgpu_inst = unsafe { Instance::from_hal::<wgpu::hal::vulkan::Api>(wgpu_hal_inst) };
         let wgpu_adapter = unsafe { wgpu_inst.create_adapter_from_hal(wgpu_hal_adapter) };
@@ -336,6 +348,13 @@ impl XROutput {
             ..Default::default()
         };
         let (device, queue) = unsafe { wgpu_adapter.create_device_from_hal(wgpu_hal_dev, &device_desc) }.expect("wgpu create_device_from_hal() failed");
+
+        let adapter_info = device.adapter_info();
+        let diags = vec![
+            format!("Adapter: {}", adapter_info.name),
+            format!("Driver: {}/{}", adapter_info.driver, adapter_info.driver_info),
+            format!("XR: {}/{}", xr_system_prop.vendor_id, xr_system_prop.system_name),
+        ];
 
         // Setup swapchain.
 
@@ -447,14 +466,15 @@ impl XROutput {
         let xr_left_click = xr_action_set.create_action::<bool>("left_click", "Left Click", &[]).expect("OpenXR create_action() failed");
         let xr_right_click = xr_action_set.create_action::<bool>("right_click", "Right Click", &[]).expect("OpenXR create_action() failed");
 
-        let mut xr_left_scroll_opt = None;
-        let mut xr_right_scroll_opt = None;
+        let xr_left_scroll_x = xr_action_set.create_action::<f32>("left_scroll_x", "Left Scroll X", &[]).expect("OpenXR create_action() failed");
+        let xr_left_scroll_y = xr_action_set.create_action::<f32>("left_scroll_y", "Left Scroll Y", &[]).expect("OpenXR create_action() failed");
+        let xr_right_scroll_x = xr_action_set.create_action::<f32>("right_scroll_x", "Right Scroll X", &[]).expect("OpenXR create_action() failed");
+        let xr_right_scroll_y = xr_action_set.create_action::<f32>("right_scroll_y", "Right Scroll Y", &[]).expect("OpenXR create_action() failed");
 
         let xr_left_haptic = xr_action_set.create_action::<openxr::Haptic>("left_haptic", "Left Haptic", &[]).expect("OpenXR create_action() failed");
         let xr_right_haptic = xr_action_set.create_action::<openxr::Haptic>("right_haptic", "Right Haptic", &[]).expect("OpenXR create_action() failed");
 
         // Register known interaction profiles.
-        // SteamVR PSVR2: It doesn't have dedicated interaction profile, but it can emulate oculus/touch_controller.
 
         let xr_left_hand = "/user/hand/left";
         let xr_right_hand = "/user/hand/right";
@@ -462,6 +482,7 @@ impl XROutput {
         let mut xr_ok = false;
 
         for (interaction_profile, aim, click, scroll_opt, haptic) in [ // TODO: use const structs here
+            // Generic
             (
                 "/khr/simple_controller",
                 "/input/aim/pose",
@@ -469,13 +490,24 @@ impl XROutput {
                 None,
                 "/output/haptic",
             ),
+
+            // Oculus_Quest2
+            // Sony_PlayStationVR2: SteamVR PSVR2: It doesn't have dedicated interaction profile, but it can emulate oculus/touch_controller.
             (
                 "/oculus/touch_controller",
                 "/input/aim/pose",
                 "/input/trigger/value",
                 Some(("/input/thumbstick/x", "/input/thumbstick/y")),
                 "/output/haptic",
+            ),
 
+            // Valve_SteamFrame
+            (
+                "/valve/frame_controller_valve",
+                "/input/aim/pose",
+                "/input/trigger/click",
+                Some(("/input/thumbstick/x", "/input/thumbstick/y")),
+                "/output/haptic",
             ),
         ] {
             let mut interaction_bindings = vec![
@@ -506,36 +538,21 @@ impl XROutput {
             ];
 
             if let Some(scroll) = scroll_opt {
-                let xr_left_scroll_x = xr_action_set.create_action::<f32>("left_scroll_x", "Left Scroll X", &[]).expect("OpenXR create_action() failed");
-                let xr_left_scroll_y = xr_action_set.create_action::<f32>("left_scroll_y", "Left Scroll Y", &[]).expect("OpenXR create_action() failed");
-                let xr_right_scroll_x = xr_action_set.create_action::<f32>("right_scroll_x", "Right Scroll X", &[]).expect("OpenXR create_action() failed");
-                let xr_right_scroll_y = xr_action_set.create_action::<f32>("right_scroll_y", "Right Scroll Y", &[]).expect("OpenXR create_action() failed");
-
-                xr_left_scroll_opt = Some(XRScroll {
-                    x: xr_left_scroll_x,
-                    y: xr_left_scroll_y,
-                });
-
-                xr_right_scroll_opt = Some(XRScroll {
-                    x: xr_right_scroll_x,
-                    y: xr_right_scroll_y,
-                });
-
                 let mut scroll_interaction_bindings = vec![
                     openxr::Binding::new(
-                        &xr_left_scroll_opt.as_ref().unwrap().x,
+                        &xr_left_scroll_x,
                         xr_inst.string_to_path(&format!("{}{}", xr_left_hand, scroll.0)).expect("OpenXR string_to_path() failed"),
                     ),
                     openxr::Binding::new(
-                        &xr_left_scroll_opt.as_ref().unwrap().y,
+                        &xr_left_scroll_y,
                         xr_inst.string_to_path(&format!("{}{}", xr_left_hand, scroll.1)).expect("OpenXR string_to_path() failed"),
                     ),
                     openxr::Binding::new(
-                        &xr_right_scroll_opt.as_ref().unwrap().x,
+                        &xr_right_scroll_x,
                         xr_inst.string_to_path(&format!("{}{}", xr_right_hand, scroll.0)).expect("OpenXR string_to_path() failed"),
                     ),
                     openxr::Binding::new(
-                        &xr_right_scroll_opt.as_ref().unwrap().y,
+                        &xr_right_scroll_y,
                         xr_inst.string_to_path(&format!("{}{}", xr_right_hand, scroll.1)).expect("OpenXR string_to_path() failed"),
                     ),
                 ];
@@ -553,10 +570,20 @@ impl XROutput {
             panic!("No supported OpenXR interaction profile found");
         }
 
+        let xr_left_scroll = XRScroll {
+            x: xr_left_scroll_x,
+            y: xr_left_scroll_y,
+        };
+
+        let xr_right_scroll = XRScroll {
+            x: xr_right_scroll_x,
+            y: xr_right_scroll_y,
+        };
+
         xr_session.attach_action_sets(&[&xr_action_set]).expect("OpenXR attach_action_sets() failed");
 
-        let xr_left_space = xr_left_action.create_space(xr_session.clone(), openxr::Path::NULL, openxr::Posef::IDENTITY).expect("OpenXR create_space() failed");
-        let xr_right_space = xr_right_action.create_space(xr_session.clone(), openxr::Path::NULL, openxr::Posef::IDENTITY).expect("OpenXR create_space() failed");
+        let xr_left_space = xr_left_action.create_space(&xr_session, openxr::Path::NULL, openxr::Posef::IDENTITY).expect("OpenXR create_space() failed");
+        let xr_right_space = xr_right_action.create_space(&xr_session, openxr::Path::NULL, openxr::Posef::IDENTITY).expect("OpenXR create_space() failed");
 
         Self {
             device,
@@ -568,6 +595,7 @@ impl XROutput {
             multisample_view,
             width,
             height,
+            diags,
             xr_session,
             inner: RefCell::new(Inner {
                 state: State::Stopped,
@@ -584,8 +612,8 @@ impl XROutput {
             xr_right_space,
             xr_left_click,
             xr_right_click,
-            xr_left_scroll_opt,
-            xr_right_scroll_opt,
+            xr_left_scroll,
+            xr_right_scroll,
             xr_left_haptic,
             xr_right_haptic,
             xr_inst,
@@ -593,7 +621,7 @@ impl XROutput {
     }
 
     pub fn get_info(&self) -> OutputInfo { // TODO: prepare it it new and don't create new instance everytime?
-        OutputInfo::new(&self.device, &self.queue, self.color_format, DEPTH_FORMAT, self.sample_count, 2, "@builtin(view_index) view_index: u32,", "in.view_index")
+        OutputInfo::new(&self.device, &self.queue, self.color_format, DEPTH_FORMAT, self.sample_count, 2, "@builtin(view_index) view_index: u32,", "in.view_index", &self.diags)
     }
 
     pub fn poll(&self, main: &Main) -> bool {
@@ -782,24 +810,34 @@ impl XROutput {
         let click_l = self.xr_left_click.state(&self.xr_session, openxr::Path::NULL).expect("OpenXR state() failed").current_state;
         let click_r = self.xr_right_click.state(&self.xr_session, openxr::Path::NULL).expect("OpenXR state() failed").current_state;
 
-        let scroll_l_opt = self.xr_left_scroll_opt.as_ref().map(|scroll| self.calc_scroll(scroll, ts_diff));
-        let scroll_r_opt = self.xr_right_scroll_opt.as_ref().map(|scroll| self.calc_scroll(scroll, ts_diff));
+        let scroll_l = self.calc_scroll(&self.xr_left_scroll, ts_diff);
+        let scroll_r = self.calc_scroll(&self.xr_right_scroll, ts_diff);
 
-        let pose_l_opt = self.calc_pose(focused, origin, &left_location, click_l, scroll_l_opt, &self.xr_left_haptic);
-        let pose_r_opt = self.calc_pose(focused, origin, &right_location, click_r, scroll_r_opt, &self.xr_right_haptic);
+        let pose_l_opt = self.calc_pose(focused, origin, &left_location, click_l, scroll_l, &self.xr_left_haptic);
+        let pose_r_opt = self.calc_pose(focused, origin, &right_location, click_r, scroll_r, &self.xr_right_haptic);
         
         let frame = XRFrame::new(xr_swapchain, xr_stream, &self.xr_space, self.width, self.height, display_t, views, color_view, self.multisample_view.clone(), self.depth_view.clone(), view_m, cam_pos);
         Begin::Frame((frame, pose_l_opt, pose_r_opt))
     }
 
     fn calc_scroll(&self, scroll: &XRScroll, ts_diff: f32) -> ScenePoseScroll {
+        let calc = |action: &openxr::Action<f32>| {
+            let state = action.state(&self.xr_session, openxr::Path::NULL).expect("OpenXR state() failed");
+
+            if state.is_active {
+                SCROLL_SPEED * ts_diff * state.current_state
+            } else {
+                0.0
+            }
+        };
+
         (
-            -SCROLL_SPEED * ts_diff * scroll.x.state(&self.xr_session, openxr::Path::NULL).expect("OpenXR state() failed").current_state,
-            SCROLL_SPEED * ts_diff * scroll.y.state(&self.xr_session, openxr::Path::NULL).expect("OpenXR state() failed").current_state,
+            -calc(&scroll.x),
+            calc(&scroll.y),
         )
     }
 
-    fn calc_pose(&self, focused: bool, origin: &Origin, location: &openxr::SpaceLocation, click: bool, scroll_opt: Option<ScenePoseScroll>, haptic: &openxr::Action<openxr::Haptic>) -> Option<XRPose> {
+    fn calc_pose(&self, focused: bool, origin: &Origin, location: &openxr::SpaceLocation, click: bool, scroll: ScenePoseScroll, haptic: &openxr::Action<openxr::Haptic>) -> Option<XRPose> {
         if focused && location.location_flags.contains(openxr::SpaceLocationFlags::POSITION_VALID | openxr::SpaceLocationFlags::ORIENTATION_VALID) {
             let offset = Quaternion::from_angle_x(Deg(-45.0));
 
@@ -814,7 +852,7 @@ impl XROutput {
             let pos = origin_rot_inv * (Vector3::new(xr_pos.x, -xr_pos.z, xr_pos.y) - origin.pos); // inverse(origin.rot) * inverse(origin.pos) * xr_pos
             let rot = origin_rot_inv * Quaternion::new(xr_rot.w, xr_rot.x, -xr_rot.z, xr_rot.y) * offset;
 
-            Some(XRPose::new(&pos, &rot, click, scroll_opt.unwrap_or((0.0, 0.0)), self.xr_session.clone(), haptic.clone())) // TODO: unwrap_or -> unwrap_or_default.
+            Some(XRPose::new(&pos, &rot, click, scroll, self.xr_session.clone(), haptic.clone()))
         } else {
             None
         }
@@ -909,6 +947,8 @@ impl<'a> XRFrame<'a> {
 }
 
 impl<'a> Frame for XRFrame<'a> {
+    type OutputViewMat = OutputViewMat;
+
     fn get_color_view(&self) -> &TextureView {
         &self.color_view
     }
@@ -925,10 +965,8 @@ impl<'a> Frame for XRFrame<'a> {
         self.cam_pos
     }
 
-    fn set_view_m(&self, buf: &mut [u8]) {
-        let buf_sl: &mut [OutputViewMat] = bytemuck::cast_slice_mut(buf);
-        let view_m = &mut buf_sl[0];
-        *view_m = self.view_m;
+    fn get_view_m(&self) -> Self::OutputViewMat {
+        self.view_m
     }
 
     fn end(self) {

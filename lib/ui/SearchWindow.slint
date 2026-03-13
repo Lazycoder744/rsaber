@@ -209,18 +209,22 @@ export component SearchWindow inherits WindowBase {
                         VerticalLayout {
                             Text {
                                 text: "Uploader: " + root.detail-item.uploader-name;
+                                wrap: word-wrap;
                             }
 
                             Text {
                                 text: "Duration: " + root.detail-item.duration;
+                                wrap: word-wrap;
                             }
 
                             Text {
                                 text: "BPM: " + root.detail-item.bpm;
+                                wrap: word-wrap;
                             }
 
                             Text {
                                 text: "Score: " + root.detail-item.score + "%";
+                                wrap: word-wrap;
                             }
                         }
 
@@ -247,6 +251,7 @@ export component SearchWindow inherits WindowBase {
 
                         if (root.detail-item.difficulty-strs.length == 0) : Text {
                             text: "The song doesn't support Standard characteristic";
+                            wrap: word-wrap;
                         }
 
                         Text {
@@ -261,6 +266,7 @@ export component SearchWindow inherits WindowBase {
 
                     Text {
                         text: root.message;
+                        wrap: word-wrap;
                     }
                 }
             }

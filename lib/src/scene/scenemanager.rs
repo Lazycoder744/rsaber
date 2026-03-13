@@ -18,7 +18,8 @@ pub trait SceneFactory {
     type Scene: Scene + 'static;
     type Error;
 
-    fn load(self, asset_mgr: AssetManagerRc, model_reg: &mut ModelRegistry, stats: StatsRc, audio_engine: AudioEngineRc, ui_loop: &UILoop, net_manager: &NetManager) -> Result<Self::Scene, Self::Error>; // TODO: Put all these parameters into a struct?
+    #[allow(clippy::too_many_arguments)]
+    fn load(self, asset_mgr: AssetManagerRc, model_reg: &mut ModelRegistry, output_info: OutputInfoRc, stats: StatsRc, audio_engine: AudioEngineRc, ui_loop: &UILoop, net_manager: &NetManager) -> Result<Self::Scene, Self::Error>; // TODO: Put all these parameters into a struct?
 }
 
 pub trait Scene { // TODO: add lifecycle methods?
@@ -94,7 +95,7 @@ impl SceneManager {
 
             // TODO: Implement cache, since ModelRegistry/Obj is going to reload/compile assets on scene switch.
             let mut model_reg = ModelRegistry::new(Arc::clone(&self.asset_mgr), Rc::clone(&self.output_info), Rc::clone(&self.ui_manager));
-            let scene = Box::new(factory.load(Arc::clone(&self.asset_mgr), &mut model_reg, Arc::clone(&self.stats), Rc::clone(&self.audio_engine), self.ui_manager.get_ui_loop(), &self.net_manager)?); // TODO: Load next scene: this is going to block the renderloop. Do it on different thread?
+            let scene = Box::new(factory.load(Arc::clone(&self.asset_mgr), &mut model_reg, Rc::clone(&self.output_info), Arc::clone(&self.stats), Rc::clone(&self.audio_engine), self.ui_manager.get_ui_loop(), &self.net_manager)?); // TODO: Load next scene: this is going to block the renderloop. Do it on different thread?
             let model_renderer = model_reg.build(Arc::clone(&self.stats), &self.uni_bg_layout);
 
             let next_scene_info = SceneInfo::new(scene, model_renderer);

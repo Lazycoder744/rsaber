@@ -223,11 +223,11 @@ impl Window {
 }
 
 impl Model for Window {
-    fn fill_window(&self, inst_index: u32, inst_sh_buf: &mut InstWindowBuf) {
+    fn fill_window(&self, inst_index: u32) -> InstWindowBuf {
         assert!(inst_index == 0);
 
         let inner = self.inner.borrow();
         let model_m = Matrix4::from_translation(inner.pos) * Matrix4::from(inner.rot) * Matrix4::from_nonuniform_scale(inner.scale.0, 1.0, inner.scale.1);
-        inst_sh_buf.fill(self.sampler_id, self.texture_id, &model_m);
+        InstWindowBuf::fill(self.sampler_id, self.texture_id, &model_m)
     }
 }

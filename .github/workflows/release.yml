@@ -1,4 +1,3 @@
-# TODO: use ANDROID_HOME instead of hardcoded C:\Android\android-sdk
 # TODO: use cache
 # TODO: integrate crate publish
 
@@ -10,41 +9,80 @@ on:
       - "v*.*.*"
 
 jobs:
-  release:
-    runs-on: windows-latest
+  build:
+    strategy:
+      matrix:
+        include:
+        - os: ubuntu-latest
+          target: test
+        - os: ubuntu-latest
+          target: pc
+          build_suffix: ""
+          artifact_suffix: _linux_x64
+        - os: ubuntu-24.04-arm
+          target: pcvr
+          build_suffix: ""
+          artifact_suffix: _linux_arm64
+        - os: windows-latest
+          target: pc
+          build_suffix: .exe
+          artifact_suffix: _windows_x64.exe
+        - os: windows-latest
+          target: pcvr
+          build_suffix: .exe
+          artifact_suffix: _windows_x64.exe
+        - os: windows-latest
+          target: android
+
+    runs-on: ${{ matrix.os }}
 
     env:
       ANDROID_SDK_LEVEL: 34
 
-    permissions:
-      contents: write
-
     steps:
     - name: Checkout
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Test
+      if: matrix.target == "test"
       run: |
         cd lib
         cargo test
 
     - name: Build pc
+      if: matrix.target == "pc"
       run: |
         cd pc
         cargo build --release
 
+    - name: Upload pc
+      if: matrix.target == "pc"
+      uses: actions/upload-artifact@v7
+      with:
+        path: ${{ format("target/release/rsaber_pc{0}", matrix.build_suffix) }}
+        name: ${{ format("rsaber_pc{0}", matrix.artifact_suffix) }}
+
     - name: Build pcvr
+      if: matrix.target == "pcvr"
       run: |
         cd pcvr
         cargo build --release
 
+    - name: Upload pcvr
+      if: matrix.target == "pcvr"
+      uses: actions/upload-artifact@v7
+      with:
+        path: ${{ format("target/release/rsaber_pcvr{0}", matrix.build_suffix) }}
+        name: ${{ format("rsaber_pcvr{0}", matrix.artifact_suffix) }}
+
     - name: Prepare android
+      if: matrix.target == "android"
       run: |
         rustup target add aarch64-linux-android
         cargo install cargo-ndk
-        C:\Android\android-sdk\cmdline-tools\latest\bin\sdkmanager --install "platforms;android-$Env:ANDROID_SDK_LEVEL"
 
     - name: Build android
+      if: matrix.target == "android"
       run: |
         cd android\build
         $Env:ANDROID_KEYSTORE = "$PWD\keystore"
@@ -53,13 +91,29 @@ jobs:
         $Env:ANDROID_KEYALIAS_PW = "${{ secrets.ANDROID_KEYALIAS_PW }}"
         [System.Convert]::FromBase64String("${{ secrets.ANDROID_KEYSTORE }}") | Set-Content $Env:ANDROID_KEYSTORE -AsByteStream
         .\gradlew assembleRelease
-        copy app\build\outputs\apk\release\app-release.apk rsaber_android.apk
         del $Env:ANDROID_KEYSTORE
+
+    - name: Upload android
+      if: matrix.target == "android"
+      uses: actions/upload-artifact@v7
+      with:
+        path: app\build\outputs\apk\release\app-release.apk
+        name: rsaber_android.apk
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download
+      uses: actions/download-artifact@v8
+      with:
+        path: artifacts
 
     - name: Release
       uses: softprops/action-gh-release@v2
       with:
-        files: |
-          target/release/rsaber_pc.exe
-          target/release/rsaber_pcvr.exe
-          android/build/rsaber_android.apk
+        files: artifacts/*

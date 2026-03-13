@@ -10,6 +10,7 @@ use crate::asset::AssetManagerRc;
 use crate::audio::{AudioEngineRc, AudioFile, AudioFileHandle, AudioTimestamp};
 use crate::model::*;
 use crate::net::NetManager;
+use crate::output::OutputInfoRc;
 use crate::scene::{MenuParam, Scene, SceneFactory, SceneInput, SceneManager, ScenePose, create_floor, create_saber, create_stats_window};
 use crate::songinfo::{BPMInfo, NoteCutDir, NoteType, SongInfo};
 use crate::ui::{GameStatsWindow, UILoop};
@@ -55,7 +56,7 @@ impl SceneFactory for GameParam {
     type Scene = Game;
     type Error = String;
 
-    fn load(self, _asset_mgr: AssetManagerRc, model_reg: &mut ModelRegistry, stats: StatsRc, audio_engine: AudioEngineRc, ui_loop: &UILoop, _net_manager: &NetManager) -> Result<Self::Scene, Self::Error> {
+    fn load(self, _asset_mgr: AssetManagerRc, model_reg: &mut ModelRegistry, _output_info: OutputInfoRc, stats: StatsRc, audio_engine: AudioEngineRc, ui_loop: &UILoop, _net_manager: &NetManager) -> Result<Self::Scene, Self::Error> {
         Game::new(self, model_reg, stats, audio_engine, ui_loop)
     }
 }

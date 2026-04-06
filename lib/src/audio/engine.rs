@@ -165,7 +165,7 @@ impl AudioEngine {
                 if pos.end != u64::MAX && pos.end > frame_count_pause {
                     i += 1;
                 } else {
-                    match source_info.source.get_samples(source_buf_sl) {                        
+                    match source_info.source.get_samples(source_buf_sl) {
                         AudioSourceState::Paused => {
                             if pos.end == u64::MAX {
                                 pos.end = frame_count;

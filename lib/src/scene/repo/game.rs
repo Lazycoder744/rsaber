@@ -449,8 +449,7 @@ impl Scene for Game {
                     inner.start = false;
                 }
 
-                let curr_time = Instant::now();
-                let ts = curr_time.duration_since(inner.start_time).as_secs_f32();
+                let ts = inner.start_time.elapsed().as_secs_f32();
 
                 if !(inner.alive_objs.is_empty() && inner.cube_range_end == self.cube_infos.len()) {
                     self.update_objs(inner, ts, scene_input);

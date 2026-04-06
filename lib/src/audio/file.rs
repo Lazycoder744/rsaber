@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use atomic::Atomic;
-use audioadapter_buffers::direct::InterleavedSlice;
 use bytemuck::NoUninit;
 use rubato::{Fft, FixedSync, Resampler};
+use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::errors::Error as symphonia_Error;
 use symphonia::core::io::{MediaSourceStream, ReadOnlySource};

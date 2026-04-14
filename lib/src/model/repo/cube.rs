@@ -5,7 +5,10 @@ use cgmath::{Matrix4, Quaternion, Vector3};
 use wgpu::Device;
 
 use crate::asset::AssetManagerRc;
-use crate::model::{Color, InstPhongColorBuf, InstShaderImplType, InstShaderType, Mesh, Model, ModelFactory, ModelHandle, Obj, PhongParam};
+use crate::model::{
+    Color, InstPhongColorBuf, InstShaderImplType, InstShaderType, Mesh, Model, ModelFactory,
+    ModelHandle, Obj, PhongParam,
+};
 use crate::ui::UIManagerRc;
 
 pub enum CubeSymbol {
@@ -22,7 +25,13 @@ pub struct CubeParam {
 }
 
 impl CubeParam {
-    pub fn new(symbol: CubeSymbol, body_color: &Color, body_phong_param: &PhongParam, symbol_color: &Color, symbol_phong_param: &PhongParam) -> Self {
+    pub fn new(
+        symbol: CubeSymbol,
+        body_color: &Color,
+        body_phong_param: &PhongParam,
+        symbol_color: &Color,
+        symbol_phong_param: &PhongParam,
+    ) -> Self {
         Self {
             symbol,
             body_color: *body_color,
@@ -42,15 +51,26 @@ impl ModelFactory for CubeParam {
 
     fn get_mesh(asset_mgr: AssetManagerRc, device: &Device) -> Mesh {
         // TODO: Make it possible to use the same submesh, e.g. body_l and body_r are the same, but mirrored.
-        Obj::open(asset_mgr, device, "cube", &[
-            ("body_l", &InstShaderType::PhongColor), // 0
-            ("body_r", &InstShaderType::PhongColor), // 1
-            ("arrow", &InstShaderType::PhongColor), // 2
-            ("dot", &InstShaderType::PhongColor), // 3
-        ])
+        Obj::open(
+            asset_mgr,
+            device,
+            "cube",
+            &[
+                ("body_l", &InstShaderType::PhongColor), // 0
+                ("body_r", &InstShaderType::PhongColor), // 1
+                ("arrow", &InstShaderType::PhongColor),  // 2
+                ("dot", &InstShaderType::PhongColor),    // 3
+            ],
+        )
     }
 
-    fn create(self, handle: ModelHandle, _device: &Device, _inst_sh_impls: &mut [InstShaderImplType], _ui_manager: UIManagerRc) -> Self::Model {
+    fn create(
+        self,
+        handle: ModelHandle,
+        _device: &Device,
+        _inst_sh_impls: &mut [InstShaderImplType],
+        _ui_manager: UIManagerRc,
+    ) -> Self::Model {
         Cube::new(self, handle)
     }
 }
@@ -113,24 +133,26 @@ impl Cube {
     pub fn set_visible(&self, visible: bool) {
         let inner = self.inner.borrow();
         assert!(matches!(inner.mode, CubeMode::Single));
-        
+
         self.handle.set_visible(0, visible);
         self.handle.set_visible(1, visible);
-        self.handle.set_visible(2, visible && matches!(self.param.symbol, CubeSymbol::Arrow));
-        self.handle.set_visible(3, visible && matches!(self.param.symbol, CubeSymbol::Dot));
+        self.handle
+            .set_visible(2, visible && matches!(self.param.symbol, CubeSymbol::Arrow));
+        self.handle
+            .set_visible(3, visible && matches!(self.param.symbol, CubeSymbol::Dot));
     }
 
     pub fn set_visible_l(&self, visible: bool) {
         let inner = self.inner.borrow();
         assert!(matches!(inner.mode, CubeMode::Sliced));
-        
+
         self.handle.set_visible(0, visible);
     }
 
     pub fn set_visible_r(&self, visible: bool) {
         let inner = self.inner.borrow();
         assert!(matches!(inner.mode, CubeMode::Sliced));
-        
+
         self.handle.set_visible(1, visible);
     }
 
@@ -197,10 +219,11 @@ impl Model for Cube {
                 0 => (inner.pos_l, inner.rot_l),
                 1 => (inner.pos_r, inner.rot_r),
                 _ => panic!("Mode is Sliced"),
-            }
+            },
         };
 
-        let model_m = Matrix4::from_translation(pos) * Matrix4::from(rot) * Matrix4::from_scale(inner.scale);
+        let model_m =
+            Matrix4::from_translation(pos) * Matrix4::from(rot) * Matrix4::from_scale(inner.scale);
         InstPhongColorBuf::fill(color, phong_param, &model_m)
     }
 }

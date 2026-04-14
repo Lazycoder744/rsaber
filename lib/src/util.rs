@@ -55,7 +55,6 @@ pub type StatsRc = Arc<Stats>;
 pub struct Stats {
     // Although the render is happening on a single thread, we are already
     // prepared for multi-threading, that's the reason for Mutex.
-    
     inner_mutex: Mutex<StatsInner>,
 }
 

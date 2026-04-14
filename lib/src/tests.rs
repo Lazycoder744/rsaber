@@ -2,7 +2,9 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::sync::Arc;
 
-use crate::asset::{AssetError, AssetFileBox, AssetFileTrait, AssetManagerRc, AssetManagerTrait, AssetResult};
+use crate::asset::{
+    AssetError, AssetFileBox, AssetFileTrait, AssetManagerRc, AssetManagerTrait, Result as AssetResult,
+};
 use crate::songinfo::SongInfo;
 
 const PREFIX: &str = "testmap";
@@ -21,7 +23,10 @@ impl AssetManager {
 
 impl AssetManagerTrait for AssetManager {
     fn open(&self, name: &str) -> AssetResult<AssetFileBox> {
-        Ok(Box::new(AssetFile::new(format!("{}/{}/{}", PREFIX, self.dir, name))))
+        Ok(Box::new(AssetFile::new(format!(
+            "{}/{}/{}",
+            PREFIX, self.dir, name
+        ))))
     }
 }
 
@@ -31,9 +36,7 @@ struct AssetFile {
 
 impl AssetFile {
     fn new(name: String) -> Self {
-        Self {
-            name,
-        }
+        Self { name }
     }
 
     fn open(name: &str) -> AssetResult<File> {
@@ -42,22 +45,26 @@ impl AssetFile {
 }
 
 impl AssetFileTrait for AssetFile {
-    fn read(&self) -> AssetResult<Box<dyn Read + Send + Sync>> {
+    fn read(self: Box<Self>) -> AssetResult<Box<dyn Read + Send + Sync>> {
         let file = Self::open(&self.name)?;
         Ok(Box::new(file))
     }
 
-    fn read_str(&self) -> AssetResult<String> {
+    fn read_str(self: Box<Self>) -> AssetResult<String> {
         let mut file = Self::open(&self.name)?;
         let mut buf = String::new();
-        file.read_to_string(&mut buf).map_err(|_| AssetError::Decode)?;
+        file.read_to_string(&mut buf)
+            .map_err(|_| AssetError::Decode)?;
         Ok(buf)
     }
 }
 
 #[test]
 fn test_map() {
-    for entry in fs::read_dir(PREFIX).expect("Unable to read directory").map(|entry| entry.expect("Unable to read entry")) {
+    for entry in fs::read_dir(PREFIX)
+        .expect("Unable to read directory")
+        .map(|entry| entry.expect("Unable to read entry"))
+    {
         let filename = entry.file_name();
         let dir = filename.to_str().unwrap();
 

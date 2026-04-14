@@ -10,13 +10,24 @@ use crate::asset::{AssetFileBox, AssetManagerRc};
 use crate::audio::{AudioEngineRc, AudioFader, AudioFaderHandle, AudioFile, AudioFileHandle};
 use crate::mailbox::{self, Receiver, TryRecvError};
 use crate::model::*;
-use crate::net::{AssetFileRequest, BeatSaverSearchRequest, ImageRequest, NetManager, SongZipRequest};
+use crate::net::{
+    AssetFileRequest, BeatSaverSearchRequest, ImageRequest, NetManager, SongZipRequest,
+};
 use crate::output::OutputInfoRc;
-use crate::scene::{GameParam, Scene, SceneFactory, SceneInput, SceneManager, create_floor, create_saber, create_stats_window};
+use crate::scene::{
+    GameParam, Scene, SceneFactory, SceneInput, SceneLoadContext, SceneManager, create_floor,
+    create_saber, create_stats_window,
+};
 use crate::songdef::{CHAR_STANDARD, SongDifficulty};
-use crate::songinfo::{SongInfo, ColorScheme};
-use crate::ui::{AboutWindow, PoweredByWindow, SearchWindow, SearchWindowItem, SearchWindowMode, UILoop, VirtualKeyboardWindow};
-use crate::ui::slintimpl::{self, ComponentHandle as slintimpl_ComponentHandle, Model as slintimpl_Model, WindowUtil as slintimpl_WindowUtil};
+use crate::songinfo::{ColorScheme, SongInfo};
+use crate::ui::slintimpl::{
+    self, ComponentHandle as slintimpl_ComponentHandle, Model as slintimpl_Model,
+    WindowUtil as slintimpl_WindowUtil,
+};
+use crate::ui::{
+    AboutWindow, PoweredByWindow, SearchWindow, SearchWindowItem, SearchWindowMode, UILoop,
+    VirtualKeyboardWindow,
+};
 use crate::util::StatsRc;
 
 const POINTER_COLOR: Color = Color([0.4, 0.4, 0.4]);
@@ -27,8 +38,7 @@ pub struct MenuParam;
 impl MenuParam {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        Self {
-        }
+        Self {}
     }
 }
 
@@ -36,8 +46,27 @@ impl SceneFactory for MenuParam {
     type Scene = Menu;
     type Error = ();
 
-    fn load(self, asset_mgr: AssetManagerRc, model_reg: &mut ModelRegistry, output_info: OutputInfoRc, stats: StatsRc, audio_engine: AudioEngineRc, ui_loop: &UILoop, net_manager: &NetManager) -> Result<Self::Scene, Self::Error> {
-        Menu::new(self, asset_mgr, model_reg, output_info, stats, audio_engine, ui_loop, net_manager)
+    fn load(
+        self,
+        ctx: SceneLoadContext<'_>,
+    ) -> Result<Self::Scene, Self::Error> {
+        let asset_mgr = ctx.asset_mgr;
+        let model_reg = ctx.model_reg;
+        let output_info = ctx.output_info;
+        let stats = ctx.stats;
+        let audio_engine = ctx.audio_engine;
+        let ui_loop = ctx.ui_loop;
+        let net_manager = ctx.net_manager;
+        Menu::new(
+            self,
+            asset_mgr,
+            model_reg,
+            output_info,
+            stats,
+            audio_engine,
+            ui_loop,
+            net_manager,
+        )
     }
 }
 
@@ -66,7 +95,7 @@ struct Inner {
 enum SearchMessage {
     PreviewStart(AssetFileBox, usize),
     PreviewStop,
-    GameStart(AssetManagerRc, SongInfo, usize),
+    GameStart(AssetManagerRc, SongInfo, usize, f32, f32),
     #[cfg(feature = "test")]
     TestStart,
 }
@@ -106,7 +135,16 @@ enum UpdateItemOp {
 
 impl Menu {
     #[allow(clippy::too_many_arguments)]
-    fn new(_param: MenuParam, asset_mgr: AssetManagerRc, model_reg: &mut ModelRegistry, output_info: OutputInfoRc, stats: StatsRc, audio_engine: AudioEngineRc, ui_loop: &UILoop, net_manager: &NetManager) -> Result<Self, ()> {
+    fn new(
+        _param: MenuParam,
+        asset_mgr: AssetManagerRc,
+        model_reg: &mut ModelRegistry,
+        output_info: OutputInfoRc,
+        stats: StatsRc,
+        audio_engine: AudioEngineRc,
+        ui_loop: &UILoop,
+        net_manager: &NetManager,
+    ) -> Result<Self, ()> {
         // Implementation notes:
         // - Weak window references in event handlers (on_*):
         //   - If a weak reference to its parent window is unwrapped (window_weak.unwrap()),
@@ -130,13 +168,13 @@ impl Menu {
         let window_param = WindowParam::new(700, 350, {
             let vkbd_window_tx = vkbd_window_tx.clone();
             let vkbd_window_func_opt_mutex = Arc::clone(&vkbd_window_func_opt_mutex);
-            
+
             || {
                 let window = VirtualKeyboardWindow::new().unwrap();
 
                 window.on_pressed({
                     let window_weak = window.as_weak();
-                    
+
                     move |value| {
                         // Send key events.
 
@@ -151,7 +189,11 @@ impl Menu {
                     move |value| {
                         // Value has been changed.
 
-                        let func_opt = vkbd_window_func_opt_mutex.lock().unwrap().as_ref().map(Arc::clone);
+                        let func_opt = vkbd_window_func_opt_mutex
+                            .lock()
+                            .unwrap()
+                            .as_ref()
+                            .map(Arc::clone);
 
                         // Invoke callback (the lock has been already released).
 
@@ -184,12 +226,16 @@ impl Menu {
         // Setup about by window. On some platforms, the diagnostic information is
         // a multiline string, so put it into one single line.
 
-        let diags: Vec<_> = output_info.get_diags().iter().map(|diag| diag.replace("\n", ", ").into()).collect();
+        let diags: Vec<_> = output_info
+            .get_diags()
+            .iter()
+            .map(|diag| diag.replace("\n", ", ").into())
+            .collect();
 
         let window_param = WindowParam::new(500, 500, move || {
             let window = AboutWindow::new().unwrap();
             window.set_version(APP_VERSION.clone().into());
-    
+
             let diags_model = slintimpl::VecModel::default();
             diags_model.set_vec(diags);
 
@@ -241,6 +287,7 @@ impl Menu {
                         let query = window.get_query();
                         let order = window.get_order();
                         let ascending = window.get_ascending();
+                        let page = window.get_page();
 
                         window.set_mode(SearchWindowMode::Message);
                         window.set_show_detail(false);
@@ -253,7 +300,11 @@ impl Menu {
                             let mut search_window_state = search_window_state_mutex.lock().unwrap();
 
                             search_window_state.preview_serial += 1;
-                            Self::update_item(&window, &mut search_window_state, UpdateItemOp::Clear);
+                            Self::update_item(
+                                &window,
+                                &mut search_window_state,
+                                UpdateItemOp::Clear,
+                            );
                         }
 
                         // Terminate in-progress fetches.
@@ -264,7 +315,7 @@ impl Menu {
 
                         // Submit search.
 
-                        let handle = net_manager_exec.submit(BeatSaverSearchRequest::new(query, order, ascending), {
+                        let handle = net_manager_exec.submit(BeatSaverSearchRequest::new(query, order, ascending, page.try_into().unwrap()), {
                             let net_manager_exec = net_manager_exec.clone();
                             let window_weak = window_weak.clone();
                             let handles_mutex_weak = handles_mutex_weak.clone();
@@ -280,7 +331,7 @@ impl Menu {
 
                                         if !songs.is_empty() {
                                             window.set_mode(SearchWindowMode::Item);
-                                            
+
                                             let handles_mutex = handles_mutex_weak.upgrade().unwrap();
                                             let mut handles = handles_mutex.lock().unwrap();
 
@@ -289,18 +340,18 @@ impl Menu {
 
                                                 let mut difficulties: Box<_> = version.get_variants().iter().filter_map(|variant| {
                                                     if variant.get_characteristic() == CHAR_STANDARD {
-                                                        Some(variant.get_difficulty())
+                                                        Some((variant.get_difficulty(), variant.get_njs(), variant.get_offset()))
                                                     } else {
                                                         None
                                                     }
                                                 }).collect();
-                                                difficulties.sort();
+                                                difficulties.sort_by(|a, b| a.0.cmp(&b.0));
 
-                                                let difficulty_ints: Vec<_> = difficulties.iter().map(|difficulty| (*difficulty).into()).collect();
+                                                let difficulty_ints: Vec<_> = difficulties.iter().map(|(difficulty, _, _)| (*difficulty).into()).collect();
                                                 let difficulty_ints_model = slintimpl::VecModel::default();
                                                 difficulty_ints_model.set_vec(difficulty_ints);
 
-                                                let difficulty_strs: Vec<_> = difficulties.iter().map(|difficulty| {
+                                                let difficulty_strs: Vec<_> = difficulties.iter().map(|(difficulty, _, _)| {
                                                     match difficulty {
                                                         SongDifficulty::Easy => "Easy",
                                                         SongDifficulty::Normal => "Normal",
@@ -311,6 +362,14 @@ impl Menu {
                                                 }).collect();
                                                 let difficulty_strs_model = slintimpl::VecModel::default();
                                                 difficulty_strs_model.set_vec(difficulty_strs);
+
+                                                let difficulty_njs: Vec<_> = difficulties.iter().map(|(_, njs, _)| *njs).collect();
+                                                let difficulty_njs_model = slintimpl::VecModel::default();
+                                                difficulty_njs_model.set_vec(difficulty_njs);
+
+                                                let difficulty_offsets: Vec<_> = difficulties.iter().map(|(_, _, offset)| *offset).collect();
+                                                let difficulty_offsets_model = slintimpl::VecModel::default();
+                                                difficulty_offsets_model.set_vec(difficulty_offsets);
 
                                                 // Create item.
 
@@ -328,6 +387,8 @@ impl Menu {
                                                     download_url: version.get_download_url().as_ref().into(),
                                                     difficulty_ints: slintimpl::ModelRc::new(difficulty_ints_model),
                                                     difficulty_strs: slintimpl::ModelRc::new(difficulty_strs_model),
+                                                    difficulty_njs: slintimpl::ModelRc::new(difficulty_njs_model),
+                                                    difficulty_offsets: slintimpl::ModelRc::new(difficulty_offsets_model),
                                                     active: false,
                                                     preview_active: false,
                                                 };
@@ -335,8 +396,8 @@ impl Menu {
                                                 items.push(item);
 
                                                 // Submit cover image fetch.
-                                                
-                                                let handle = net_manager_exec.submit(ImageRequest::new(version.get_cover_url().clone()), { // TODO: cache?
+
+                                                let handle = net_manager_exec.submit(ImageRequest::new(version.get_cover_url().clone()), {
                                                     let window_weak = window_weak.clone();
 
                                                     move |r| {
@@ -416,7 +477,7 @@ impl Menu {
                 window.on_change_query({
                     let window_weak = window.as_weak();
                     let search = Arc::clone(&search);
-                    
+
                     move || {
                         let _ = Arc::strong_count(&handles_mutex); // As long as the SearchWindow is alive, handles_mutex is alive as well.
 
@@ -448,6 +509,7 @@ impl Menu {
                                 let window = window_opt.unwrap();
 
                                 window.set_query(query.into());
+                                window.set_page(0);
                                 search();
                             }
                         }));
@@ -458,15 +520,37 @@ impl Menu {
 
                 window.on_change_other({
                     let search = Arc::clone(&search);
+                    let window_weak = window.as_weak();
 
                     move || {
+                        let window_opt = window_weak.upgrade();
+                        if let Some(window) = window_opt {
+                            window.set_page(0);
+                        }
+                        search();
+                    }
+                });
+
+                window.on_change_page({
+                    let search = Arc::clone(&search);
+                    let window_weak = window.as_weak();
+
+                    move |offset| {
+                        let window_opt = window_weak.upgrade();
+                        if let Some(window) = window_opt {
+                            let mut page = window.get_page() + offset;
+                            if page < 0 {
+                                page = 0;
+                            }
+                            window.set_page(page);
+                        }
                         search();
                     }
                 });
 
                 window.on_refresh({
                     let search = Arc::clone(&search);
-                    
+
                     move || {
                         search();
                     }
@@ -504,27 +588,42 @@ impl Menu {
 
                         if let Some(active_info) = &search_window_state.active_info_opt {
                             let difficulty_index = window.get_difficulty_index();
-                            let item = model.row_data(active_info.item_index).expect("Item expected");
+                            let item = model
+                                .row_data(active_info.item_index)
+                                .expect("Item expected");
                             let difficulty_ints: Box<_> = item.difficulty_ints.iter().collect();
 
                             // If the active item doesn't have any difficulty (difficulty_ints), then
                             // difficulty_index is still set. Check if we have at least one difficulty.
 
                             if !difficulty_ints.is_empty() {
-                                difficulty_int_active_opt = Some(difficulty_ints[difficulty_index as usize]);
+                                difficulty_int_active_opt =
+                                    Some(difficulty_ints[difficulty_index as usize]);
                             }
 
                             if item_index_selected == active_info.item_index {
                                 if active_info.preview_active {
-                                    Self::update_item(&window, &mut search_window_state, UpdateItemOp::PreviewStop);
+                                    Self::update_item(
+                                        &window,
+                                        &mut search_window_state,
+                                        UpdateItemOp::PreviewStop,
+                                    );
                                     return;
                                 }
                             } else {
-                                Self::update_item(&window, &mut search_window_state, UpdateItemOp::Clear);
+                                Self::update_item(
+                                    &window,
+                                    &mut search_window_state,
+                                    UpdateItemOp::Clear,
+                                );
                             }
                         }
 
-                        Self::update_item(&window, &mut search_window_state, UpdateItemOp::Active(item_index_selected));
+                        Self::update_item(
+                            &window,
+                            &mut search_window_state,
+                            UpdateItemOp::Active(item_index_selected),
+                        );
 
                         // Set detail.
 
@@ -536,35 +635,52 @@ impl Menu {
                         window.set_detail_item(item);
                         window.set_detail_message("".into());
 
-                        let difficulty_index = difficulty_int_active_opt.map_or(0, |difficulty_int_active| {
-                            difficulty_ints.iter().position(|difficulty_int| *difficulty_int == difficulty_int_active).unwrap_or(0)
-                        });
+                        let difficulty_index =
+                            difficulty_int_active_opt.map_or(0, |difficulty_int_active| {
+                                difficulty_ints
+                                    .iter()
+                                    .position(|difficulty_int| {
+                                        *difficulty_int == difficulty_int_active
+                                    })
+                                    .unwrap_or(0)
+                            });
 
                         window.set_difficulty_index(difficulty_index.try_into().unwrap());
 
                         // Submit audio preview fetch.
 
                         let url = Url::parse(&preview_url).expect("Invalid url");
-                        
-                        let handle = net_manager_exec.submit(AssetFileRequest::new(url), { // TODO: cache?
+
+                        let handle = net_manager_exec.submit(AssetFileRequest::new(url), {
+                            // TODO: cache?
                             let search_window_tx = search_window_tx.clone();
                             let search_window_state_mutex = Arc::clone(&search_window_state_mutex);
                             let window_weak = window_weak.clone();
 
                             move |r| {
                                 if let Ok(asset_file) = r {
-                                    search_window_tx.send(SearchMessage::PreviewStart(asset_file, preview_serial)).unwrap();
+                                    search_window_tx
+                                        .send(SearchMessage::PreviewStart(
+                                            asset_file,
+                                            preview_serial,
+                                        ))
+                                        .unwrap();
                                 } else {
-                                    let mut search_window_state = search_window_state_mutex.lock().unwrap();
+                                    let mut search_window_state =
+                                        search_window_state_mutex.lock().unwrap();
 
                                     // Remove play icon.
 
                                     let window = window_weak.unwrap();
-                                    Self::update_item(&window, &mut search_window_state, UpdateItemOp::PreviewStop);
+                                    Self::update_item(
+                                        &window,
+                                        &mut search_window_state,
+                                        UpdateItemOp::PreviewStop,
+                                    );
                                 }
                             }
                         });
-                        
+
                         *handle_opt_ref = Some(handle);
                     }
                 });
@@ -577,11 +693,15 @@ impl Menu {
                     let set_input_enabled = Arc::clone(&set_input_enabled);
                     let mut handle_opt = None;
 
-                    move || { // TODO: use window->detail_item instead of active_info.item_index?
+                    move || {
+                        // TODO: use window->detail_item instead of active_info.item_index?
                         let window = window_weak.unwrap();
                         let item_index = {
                             let search_window_state = search_window_state_mutex.lock().unwrap();
-                            let active_info = search_window_state.active_info_opt.as_ref().expect("Active expected");
+                            let active_info = search_window_state
+                                .active_info_opt
+                                .as_ref()
+                                .expect("Active expected");
                             active_info.item_index
                         };
 
@@ -589,6 +709,8 @@ impl Menu {
                         let item = model.row_data(item_index).expect("Item expected");
 
                         let difficulty_index = window.get_difficulty_index();
+                        let override_njs = window.get_override_njs();
+                        let override_offset = window.get_override_offset();
                         let difficulty_ints: Box<_> = item.difficulty_ints.iter().collect();
                         let difficulty_int = difficulty_ints[difficulty_index as usize];
                         let difficulty: SongDifficulty = difficulty_int.try_into().unwrap();
@@ -603,7 +725,8 @@ impl Menu {
                         let download_url: String = item.download_url.clone().into();
                         let url = Url::parse(&download_url).expect("Invalid url");
 
-                        let handle = net_manager_exec.submit(SongZipRequest::new(url), { // TODO: cache?
+                        let handle = net_manager_exec.submit(SongZipRequest::new(url), {
+                            // TODO: cache?
                             let search_window_tx = search_window_tx.clone();
                             let window_weak = window_weak.clone();
                             let set_input_enabled = Arc::clone(&set_input_enabled);
@@ -617,21 +740,40 @@ impl Menu {
                                         match SongInfo::load(Arc::clone(&asset_mgr)) {
                                             Ok(song_info) => {
                                                 let beatmap_infos = song_info.get_beatmap_infos();
-                                                
-                                                if let Some(beatmap_info_index) = beatmap_infos.iter().position(|beatmap_info| beatmap_info.get_characteristic() == CHAR_STANDARD && beatmap_info.get_difficulty() == difficulty) {
-                                                    search_window_tx.send(SearchMessage::GameStart(asset_mgr, song_info, beatmap_info_index)).unwrap();
+
+                                                if let Some(beatmap_info_index) =
+                                                    beatmap_infos.iter().position(|beatmap_info| {
+                                                        beatmap_info.get_characteristic()
+                                                            == CHAR_STANDARD
+                                                            && beatmap_info.get_difficulty()
+                                                                == difficulty
+                                                    })
+                                                {
+                                                    search_window_tx
+                                                        .send(SearchMessage::GameStart(
+                                                            asset_mgr,
+                                                            song_info,
+                                                            beatmap_info_index,
+                                                            override_njs,
+                                                            override_offset,
+                                                        ))
+                                                        .unwrap();
                                                 } else {
-                                                    e_opt = Some("No such characteristic/difficulty".to_string());
+                                                    e_opt = Some(
+                                                        "No such characteristic/difficulty"
+                                                            .to_string(),
+                                                    );
                                                 }
-                                            },
+                                            }
                                             Err(e) => {
-                                                e_opt = Some(format!("Unable to load song: {:?}", e)); // TODO: instead of debug, use display trait for formatting error msg?
-                                            },
+                                                e_opt =
+                                                    Some(format!("Unable to load song: {}", e)); // TODO: instead of debug, use display trait for formatting error msg? - Complete
+                                            }
                                         }
-                                    },
+                                    }
                                     Err(e) => {
-                                        e_opt = Some(format!("Network error: {:?}", e)); // TODO: instead of debug, use display trait for formatting error msg?
-                                    },
+                                        e_opt = Some(format!("Network error: {}", e)); // TODO: instead of debug, use display trait for formatting error msg? - Complete
+                                    }
                                 }
 
                                 if let Some(e) = e_opt {
@@ -678,9 +820,7 @@ impl Menu {
 
         // Setup powered by window.
 
-        let window_param = WindowParam::new(500, 500, || {
-            PoweredByWindow::new().unwrap()
-        });
+        let window_param = WindowParam::new(500, 500, || PoweredByWindow::new().unwrap());
 
         let poweredby_window = model_reg.create(window_param);
         poweredby_window.set_visible(true);
@@ -705,7 +845,7 @@ impl Menu {
 
         let pointer_param = PointerParam::new(&POINTER_COLOR);
         let pointer = model_reg.create(pointer_param);
-        
+
         let inner = Inner {
             audio_info_opt: None,
             preview_info_opt: None,
@@ -745,7 +885,7 @@ impl Menu {
 
                     state.active_info_opt = None;
                 }
-            },
+            }
             UpdateItemOp::Active(item_index) => {
                 let mut item = model.row_data(item_index).expect("Item expected");
 
@@ -758,7 +898,7 @@ impl Menu {
                     item_index,
                     preview_active: true,
                 });
-            },
+            }
             UpdateItemOp::PreviewStop => {
                 let active_info = state.active_info_opt.as_mut().expect("Active expected");
                 let item_index = active_info.item_index;
@@ -769,7 +909,7 @@ impl Menu {
                 model.set_row_data(item_index, item);
 
                 active_info.preview_active = false;
-            },
+            }
         }
     }
 }
@@ -819,8 +959,19 @@ impl Scene for Menu {
 
         // Handle UI events.
 
-        let windows = &[&self.vkbd_window, &self.about_window, &self.search_window, &self.poweredby_window];
-        scene_mgr.get_ui_subr().update(&self.saber_l, &self.saber_r, &self.pointer, windows, scene_input);
+        let windows = &[
+            &self.vkbd_window,
+            &self.about_window,
+            &self.search_window,
+            &self.poweredby_window,
+        ];
+        scene_mgr.get_ui_subr().update(
+            &self.saber_l,
+            &self.saber_r,
+            &self.pointer,
+            windows,
+            scene_input,
+        );
 
         // Handle virtual keyboard.
 
@@ -831,17 +982,17 @@ impl Scene for Menu {
                         // Show keyboard.
 
                         self.vkbd_window.set_visible(true);
-                    },
+                    }
                     VirtualKeyboardMessage::Close => {
                         // Hide keyboard.
 
                         self.vkbd_window.set_visible(false);
-                    },
+                    }
                 }
-            },
+            }
             Err(e) => {
                 assert!(matches!(e, TryRecvError::Empty));
-            },
+            }
         }
 
         // Poll for messages from search window.
@@ -853,7 +1004,7 @@ impl Scene for Menu {
                         fader_handle.fade_out(FADE_RATE);
 
                         // TODO: At the moment we can't start preview directly on the UI thread,
-                        // as the AudioEngineRc is Rc and not Arc. 
+                        // as the AudioEngineRc is Rc and not Arc.
                         // TODO: Use Content-Type from response to avoid format guess?
 
                         let (input, file_handle) = AudioFile::new(asset_file);
@@ -867,17 +1018,27 @@ impl Scene for Menu {
                         };
 
                         inner.preview_info_opt = Some(preview_info);
-                    },
+                    }
                     SearchMessage::PreviewStop => {
                         fader_handle.fade_in(FADE_RATE);
 
                         inner.preview_info_opt = None;
-                    },
-                    SearchMessage::GameStart(asset_mgr, song_info, beatmap_info_index) => {
-                        if let Err(e) = scene_mgr.load(GameParam::new(asset_mgr, song_info, beatmap_info_index, #[cfg(feature = "test")] false)) {
+                    }
+                    SearchMessage::GameStart(asset_mgr, song_info, beatmap_info_index, override_njs, override_offset) => {
+                        if let Err(e) = scene_mgr.load(GameParam::new(
+                            asset_mgr,
+                            song_info,
+                            beatmap_info_index,
+                            override_njs,
+                            override_offset,
+                            #[cfg(feature = "test")]
+                            false,
+                        )) {
                             self.ui_loop.add_callback({
-                                let vkbd_window_weak = self.vkbd_window.as_weak::<VirtualKeyboardWindow>();
-                                let search_window_weak = self.search_window.as_weak::<SearchWindow>();
+                                let vkbd_window_weak =
+                                    self.vkbd_window.as_weak::<VirtualKeyboardWindow>();
+                                let search_window_weak =
+                                    self.search_window.as_weak::<SearchWindow>();
 
                                 move || {
                                     let vkbd_window_opt = vkbd_window_weak.upgrade();
@@ -897,26 +1058,37 @@ impl Scene for Menu {
                                 }
                             });
                         }
-                    },
+                    }
                     #[cfg(feature = "test")]
                     SearchMessage::TestStart => {
                         let song_info = SongInfo::test(Arc::clone(&self.asset_mgr));
-                        scene_mgr.load(GameParam::new(Arc::clone(&self.asset_mgr), song_info, 0, true)).expect("Unable to load scene");
-                    },
+                        scene_mgr
+                            .load(GameParam::new(
+                                Arc::clone(&self.asset_mgr),
+                                song_info,
+                                0,
+                                0.0,
+                                0.0,
+                                true,
+                            ))
+                            .expect("Unable to load scene");
+                    }
                 }
-            },
+            }
             Err(e) => {
                 assert!(matches!(e, TryRecvError::Empty));
-            },
+            }
         }
 
         // Handle the end of audio preview.
 
-        if let Some(preview_info) = &inner.preview_info_opt && preview_info.file_handle.at_eof() {
+        if let Some(preview_info) = &inner.preview_info_opt
+            && preview_info.file_handle.at_eof()
+        {
             fader_handle.fade_in(FADE_RATE);
 
             self.ui_loop.add_callback({
-                let search_window_state_mutex = Arc::clone(&self.search_window_state_mutex);            
+                let search_window_state_mutex = Arc::clone(&self.search_window_state_mutex);
                 let window_weak = self.search_window.as_weak::<SearchWindow>();
                 let preview_serial = preview_info.serial;
 
@@ -929,7 +1101,11 @@ impl Scene for Menu {
 
                     let mut search_window_state = search_window_state_mutex.lock().unwrap();
                     if search_window_state.preview_serial == preview_serial {
-                        Self::update_item(&window, &mut search_window_state, UpdateItemOp::PreviewStop);
+                        Self::update_item(
+                            &window,
+                            &mut search_window_state,
+                            UpdateItemOp::PreviewStop,
+                        );
                     }
                 }
             });

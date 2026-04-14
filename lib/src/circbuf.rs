@@ -34,18 +34,17 @@ struct Inner<T> {
     recv_i: usize, // TODO: It can be moved to Receiver struct.
     filled: usize,
     send_alive: bool,
-    recv_alive: bool
+    recv_alive: bool,
 }
 
-pub struct Sender<T: Copy> { // TODO: why do we need Copy here?
+pub struct Sender<T: Copy> {
+    // TODO: why do we need Copy here?
     inner_muco: InnerMuCo<T>,
 }
 
 impl<T: Copy> Sender<T> {
     fn new(inner_muco: InnerMuCo<T>) -> Self {
-        Self {
-            inner_muco,
-        }
+        Self { inner_muco }
     }
 
     pub fn send(&self, buf: &[T]) -> bool {
@@ -61,14 +60,23 @@ impl<T: Copy> Sender<T> {
             let inner = self.inner_muco.mutex.lock().unwrap();
             let inner_buf_len = inner.buf.len();
 
-            let mut inner = self.inner_muco.cond.wait_while(inner, |inner| inner.recv_alive && inner.filled == inner_buf_len).unwrap(); // While full, we need to wait.
+            let mut inner = self
+                .inner_muco
+                .cond
+                .wait_while(inner, |inner| {
+                    inner.recv_alive && inner.filled == inner_buf_len
+                })
+                .unwrap(); // While full, we need to wait.
 
-            if !inner.recv_alive { // Receiver has been dropped.
+            if !inner.recv_alive {
+                // Receiver has been dropped.
                 return false;
             }
 
-            todo = (inner_buf_len - inner.filled).min( // available space in circ buffer
-                    todo);                             // available data in source buffer
+            todo = (inner_buf_len - inner.filled).min(
+                // available space in circ buffer
+                todo,
+            ); // available data in source buffer
             assert!(todo > 0);
 
             inner.filled += todo;
@@ -110,15 +118,14 @@ impl<T: Copy> Drop for Sender<T> {
     }
 }
 
-pub struct Receiver<T: Copy> { // TODO: why do we need Copy here?
+pub struct Receiver<T: Copy> {
+    // TODO: why do we need Copy here?
     inner_muco: InnerMuCo<T>,
-} 
+}
 
 impl<T: Copy> Receiver<T> {
     fn new(inner_muco: InnerMuCo<T>) -> Self {
-        Self {
-            inner_muco,
-        }
+        Self { inner_muco }
     }
 
     pub fn recv(&self, buf: &mut [T]) -> usize {
@@ -134,10 +141,16 @@ impl<T: Copy> Receiver<T> {
             let inner = self.inner_muco.mutex.lock().unwrap();
             let inner_buf_len = inner.buf.len();
 
-            let mut inner = self.inner_muco.cond.wait_while(inner, |inner| inner.send_alive && inner.filled == 0).unwrap(); // While empty, we need to wait.
+            let mut inner = self
+                .inner_muco
+                .cond
+                .wait_while(inner, |inner| inner.send_alive && inner.filled == 0)
+                .unwrap(); // While empty, we need to wait.
 
-            todo = inner.filled.min( // available data in circ buffer
-                   todo);            // available space in destination buffer
+            todo = inner.filled.min(
+                // available data in circ buffer
+                todo,
+            ); // available space in destination buffer
 
             // If the sender has been dropped, we can still consume remaining data.
 
@@ -175,7 +188,13 @@ impl<T: Copy> Receiver<T> {
         let inner = self.inner_muco.mutex.lock().unwrap();
         let inner_buf_len = inner.buf.len();
 
-        let _inner = self.inner_muco.cond.wait_while(inner, |inner| inner.send_alive && inner.filled < inner_buf_len).unwrap(); // Wait until full.
+        let _inner = self
+            .inner_muco
+            .cond
+            .wait_while(inner, |inner| {
+                inner.send_alive && inner.filled < inner_buf_len
+            })
+            .unwrap(); // Wait until full.
     }
 
     fn notify(&self) {

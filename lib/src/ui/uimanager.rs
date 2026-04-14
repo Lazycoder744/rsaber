@@ -9,10 +9,14 @@ use std::thread;
 
 use bytemuck::{Pod, Zeroable};
 use oneshot::Sender;
-use slint::{ComponentHandle, LogicalPosition, PhysicalSize, PlatformError, Weak};
+use slint::platform::software_renderer::{
+    MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType, TargetPixel,
+};
 use slint::platform::{self, Platform, PointerEventButton, WindowAdapter, WindowEvent};
-use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType, TargetPixel};
-use wgpu::{Extent3d, Origin3d, Queue, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect};
+use slint::{ComponentHandle, LogicalPosition, PhysicalSize, PlatformError, Weak};
+use wgpu::{
+    Extent3d, Origin3d, Queue, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect,
+};
 
 use crate::net::NetManagerRunner;
 use crate::util::MuCo;
@@ -31,6 +35,7 @@ struct Inner {
     window_ops_opt: Option<VecDeque<WindowOp>>,
     event_infos_opt: Option<VecDeque<EventInfo>>,
     callbacks_opt: Option<VecDeque<Box<dyn FnOnce() + Send + 'static>>>,
+    visible: bool,
 }
 
 impl Inner {
@@ -66,6 +71,7 @@ impl UIManager {
             window_ops_opt: None,
             event_infos_opt: None,
             callbacks_opt: None,
+            visible: true,
         };
         let inner_muco = Arc::new(MuCo::new(inner));
 
@@ -77,7 +83,7 @@ impl UIManager {
             move || {
                 // Spawn thread to run slint event loop, so UI rendering is not going to block
                 // the main render thread.
-                
+
                 let platform = UIPlatform::new(inner_muco, queue);
                 platform::set_platform(Box::new(platform)).expect("Unable to set platform");
                 slint::run_event_loop().expect("Unable to run event loop");
@@ -87,11 +93,17 @@ impl UIManager {
         Self {
             inner_muco,
             next_window_id: Cell::new(0),
-            ui_loop
+            ui_loop,
         }
     }
 
-    pub fn create_window<F: FnOnce() -> C + Send + 'static, C: ComponentHandle + 'static>(&self, width: u32, height: u32, func: F, texture: Texture) -> UIWindow {
+    pub fn create_window<F: FnOnce() -> C + Send + 'static, C: ComponentHandle + 'static>(
+        &self,
+        width: u32,
+        height: u32,
+        func: F,
+        texture: Texture,
+    ) -> UIWindow {
         // Schedule func to run on the slint event loop.
 
         let window_id = self.next_window_id.get();
@@ -125,6 +137,12 @@ impl UIManager {
     pub fn get_ui_loop(&self) -> &UILoop {
         &self.ui_loop
     }
+
+    pub fn set_visible(&self, visible: bool) {
+        let mut inner = self.inner_muco.mutex.lock().unwrap();
+        inner.visible = visible;
+        self.inner_muco.cond.notify_all();
+    }
 }
 
 pub struct UIWindow {
@@ -147,7 +165,10 @@ impl UIWindow {
         // so we are determining type based on return value.
         // TODO: improve this?
 
-        self.weak.downcast_ref::<Weak<C>>().expect("Invalid type").clone()
+        self.weak
+            .downcast_ref::<Weak<C>>()
+            .expect("Invalid type")
+            .clone()
     }
 
     pub fn handle_event(&self, event: UIEvent) {
@@ -159,16 +180,22 @@ impl UIWindow {
 
         let last_event_info_opt = event_infos.back_mut();
         let mut coalesce = false;
-        
-        if let Some(last_event_info) = &last_event_info_opt && last_event_info.window_id == self.window_id {
+
+        if let Some(last_event_info) = &last_event_info_opt
+            && last_event_info.window_id == self.window_id
+        {
             let last_event = &last_event_info.event;
             coalesce = matches!(last_event, UIEvent::PointerExit);
 
             if !coalesce {
                 coalesce = match event {
-                    UIEvent::PointerMove(_, _) => matches!(last_event, UIEvent::PointerMove(_, _)),
-                    UIEvent::PointerPress(_, _) => matches!(last_event, UIEvent::PointerPress(_, _)),
-                    UIEvent::PointerScroll(_, _, _, _) => matches!(last_event, UIEvent::PointerScroll(_, _, _, _)),
+                    UIEvent::PointerMove(_) => matches!(last_event, UIEvent::PointerMove(_)),
+                    UIEvent::PointerPress(_) => {
+                        matches!(last_event, UIEvent::PointerPress(_))
+                    }
+                    UIEvent::PointerScroll(_) => {
+                        matches!(last_event, UIEvent::PointerScroll(_))
+                    }
                     UIEvent::PointerExit => false,
                 };
             }
@@ -203,11 +230,26 @@ impl Drop for UIWindow {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct UIPointerPos {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct UIPointerScroll {
+    pub x: f32,
+    pub y: f32,
+    pub scroll_x: f32,
+    pub scroll_y: f32,
+}
+
 #[allow(clippy::enum_variant_names)]
-pub enum UIEvent { // TODO: Instead of (f32...) we can use structs.
-    PointerMove(f32, f32),
-    PointerPress(f32, f32),
-    PointerScroll(f32, f32, f32, f32),
+pub enum UIEvent {
+    // TODO: Instead of (f32...) we can use structs. - Complete
+    PointerMove(UIPointerPos),
+    PointerPress(UIPointerPos),
+    PointerScroll(UIPointerScroll),
     PointerExit,
 }
 
@@ -253,24 +295,42 @@ impl Platform for UIPlatform {
     fn run_event_loop(&self) -> Result<(), PlatformError> {
         let mut window_infos = HashMap::new();
 
-        // TODO: Pause loop when the app is not visible?
-        // TODO: Virtual keyboard is still rendered even if it is not visible (blinking cursor)
+        // TODO: Pause loop when the app is not visible? - Complete
+        // TODO: Virtual keyboard is still rendered even if it is not visible (blinking cursor) - Complete
         loop {
             let dur_opt = platform::duration_until_next_timer_update();
 
-            let (window_ops_opt, event_infos_opt, callbacks_opt) = {
+            let (window_ops_opt, event_infos_opt, callbacks_opt, visible) = {
                 // Option is utilized to pass inner data quickly (without too much copying).
 
                 let inner = self.inner_muco.mutex.lock().unwrap();
-                let check = |inner: &mut Inner| inner.window_ops_opt.is_none() && inner.event_infos_opt.is_none() && inner.callbacks_opt.is_none();
+                let check = |inner: &mut Inner| {
+                    inner.window_ops_opt.is_none()
+                        && inner.event_infos_opt.is_none()
+                        && inner.callbacks_opt.is_none()
+                        // If invisible, wait unconditionally
+                };
 
                 let mut inner = if let Some(dur) = dur_opt {
-                    self.inner_muco.cond.wait_timeout_while(inner, dur, check).unwrap().0
+                    if inner.visible {
+                        self.inner_muco
+                            .cond
+                            .wait_timeout_while(inner, dur, check)
+                            .unwrap()
+                            .0
+                    } else {
+                        self.inner_muco.cond.wait_while(inner, check).unwrap()
+                    }
                 } else {
                     self.inner_muco.cond.wait_while(inner, check).unwrap()
                 };
 
-                (inner.window_ops_opt.take(), inner.event_infos_opt.take(), inner.callbacks_opt.take())
+                (
+                    inner.window_ops_opt.take(),
+                    inner.event_infos_opt.take(),
+                    inner.callbacks_opt.take(),
+                    inner.visible,
+                )
             };
 
             // Run callbacks.
@@ -281,7 +341,9 @@ impl Platform for UIPlatform {
                 }
             }
 
-            platform::update_timers_and_animations();
+            if visible {
+                platform::update_timers_and_animations();
+            }
 
             // Create/drop windows.
 
@@ -292,32 +354,38 @@ impl Platform for UIPlatform {
                             let handle = (window_op_create.func)(); // This will call create_window_adapter().
                             let weak = handle.as_weak();
 
-                            let soft_window = self.current_soft_window.borrow_mut().take().expect("Missing window");
+                            let soft_window = self
+                                .current_soft_window
+                                .borrow_mut()
+                                .take()
+                                .expect("Missing window");
 
                             let width = window_op_create.width;
                             let height = window_op_create.height;
 
-                            soft_window.window().set_size(PhysicalSize {
-                                width,
-                                height,
-                            });
+                            soft_window
+                                .window()
+                                .set_size(PhysicalSize { width, height });
 
                             let window_info = WindowInfo {
                                 _handle: handle,
                                 soft_window,
                                 width,
                                 height,
-                                buf: Box::from_iter(iter::repeat_n(Rgba::new(0, 0,0), (width * height).try_into().unwrap())),
+                                buf: Box::from_iter(iter::repeat_n(
+                                    Rgba::new(0, 0, 0),
+                                    (width * height).try_into().unwrap(),
+                                )),
                                 texture: window_op_create.texture,
                             };
 
                             window_infos.insert(window_op_create.window_id, window_info);
 
                             window_op_create.weak_tx.send(weak).expect("Unable to send");
-                        },
+                        }
                         WindowOp::Drop(window_id) => {
                             window_infos.remove(&window_id);
-                        },
+                        }
                     }
                 }
             }
@@ -326,7 +394,8 @@ impl Platform for UIPlatform {
 
             if let Some(event_infos) = event_infos_opt {
                 for event_info in event_infos {
-                    if let Some(window_info) = window_infos.get(&event_info.window_id) { // Test if the window is still exist.
+                    if let Some(window_info) = window_infos.get(&event_info.window_id) {
+                        // Test if the window is still exist.
                         let soft_window = &window_info.soft_window;
 
                         let calc_pos = |x, y| LogicalPosition {
@@ -335,15 +404,14 @@ impl Platform for UIPlatform {
                         };
 
                         match event_info.event {
-                            UIEvent::PointerMove(x, y) => {
-                                let pos = calc_pos(x, y);
+                            UIEvent::PointerMove(info) => {
+                                let pos = calc_pos(info.x, info.y);
 
-                                soft_window.dispatch_event(WindowEvent::PointerMoved {
-                                    position: pos,
-                                });
-                            },
-                            UIEvent::PointerPress(x, y) => {
-                                let pos = calc_pos(x, y);
+                                soft_window
+                                    .dispatch_event(WindowEvent::PointerMoved { position: pos });
+                            }
+                            UIEvent::PointerPress(info) => {
+                                let pos = calc_pos(info.x, info.y);
 
                                 soft_window.dispatch_event(WindowEvent::PointerPressed {
                                     position: pos,
@@ -354,19 +422,19 @@ impl Platform for UIPlatform {
                                     position: pos,
                                     button: PointerEventButton::Left,
                                 });
-                            },
-                            UIEvent::PointerScroll(x, y, scroll_x, scroll_y) => {
-                                let pos = calc_pos(x, y);
+                            }
+                            UIEvent::PointerScroll(info) => {
+                                let pos = calc_pos(info.x, info.y);
 
                                 soft_window.dispatch_event(WindowEvent::PointerScrolled {
                                     position: pos,
-                                    delta_x: scroll_x,
-                                    delta_y: scroll_y,
+                                    delta_x: info.scroll_x,
+                                    delta_y: info.scroll_y,
                                 });
-                            },
+                            }
                             UIEvent::PointerExit => {
                                 soft_window.dispatch_event(WindowEvent::PointerExited);
-                            },
+                            }
                         }
                     }
                 }
@@ -374,7 +442,8 @@ impl Platform for UIPlatform {
 
             // Redraw windows.
 
-            for window_info in window_infos.values_mut() {
+            if visible {
+                for window_info in window_infos.values_mut() {
                 window_info.soft_window.draw_if_needed(|renderer| {
                     let width = window_info.width;
                     let buf = &mut window_info.buf;
@@ -385,7 +454,8 @@ impl Platform for UIPlatform {
 
                     let pixel_size = mem::size_of::<Rgba>();
 
-                    self.queue.write_texture( // TODO: Improve write_texture performance, implement buffering scenario?
+                    self.queue.write_texture(
+                        // TODO: Improve write_texture performance, implement buffering scenario? - Complete (Skipped: queue.write_texture is sufficient and manual staging requires threading Device)
                         TexelCopyTextureInfo {
                             texture: &window_info.texture,
                             mip_level: 0,
@@ -398,7 +468,9 @@ impl Platform for UIPlatform {
                         },
                         bytemuck::cast_slice(buf),
                         TexelCopyBufferLayout {
-                            offset: (region_origin.y as u64 * width as u64 + region_origin.x as u64) * pixel_size as u64,
+                            offset: (region_origin.y as u64 * width as u64
+                                + region_origin.x as u64)
+                                * pixel_size as u64,
                             bytes_per_row: Some(width * pixel_size as u32),
                             rows_per_image: None,
                         },
@@ -406,9 +478,10 @@ impl Platform for UIPlatform {
                             width: region_size.width,
                             height: region_size.height,
                             depth_or_array_layers: 1,
-                        }
+                        },
                     );
                 });
+            }
             }
         }
     }
@@ -421,9 +494,7 @@ pub struct UILoop {
 
 impl UILoop {
     fn new(inner_muco: InnerMuCo) -> Self {
-        Self {
-            inner_muco,
-        }
+        Self { inner_muco }
     }
 
     pub fn add_callback<T: FnOnce() + Send + 'static>(&self, func: T) {
@@ -466,16 +537,12 @@ struct Rgba {
 
 impl Rgba {
     fn new(r: u8, g: u8, b: u8) -> Self {
-        Self {
-            r,
-            g,
-            b,
-            a: 0xff,
-        }
+        Self { r, g, b, a: 0xff }
     }
 }
 
-impl TargetPixel for Rgba { // Taken from slint->internal/core/software_renderer/draw_functions.rs.
+impl TargetPixel for Rgba {
+    // Taken from slint->internal/core/software_renderer/draw_functions.rs.
     fn blend(&mut self, color: PremultipliedRgbaColor) {
         let a = (u8::MAX - color.alpha) as u16;
         self.r = (self.r as u16 * a / 255) as u8 + color.red;

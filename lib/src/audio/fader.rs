@@ -15,10 +15,7 @@ impl<T: AudioInput> AudioFader<T> {
     pub fn new(inner_input: T) -> (Self, AudioFaderHandle) {
         let (tx, rx) = mailbox::mailbox();
 
-        let input = Self {
-            inner_input,
-            rx,
-        };
+        let input = Self { inner_input, rx };
 
         let handle = AudioFaderHandle::new(tx);
 
@@ -49,7 +46,8 @@ pub struct AudioFaderSource<T> {
     simd_arch: SimdArch,
 }
 
-enum Command { // Rate [dB/s]
+enum Command {
+    // Rate [dB/s]
     Silence,
     FadeIn(u8),
     FadeOut(u8),
@@ -83,13 +81,14 @@ impl<T: AudioSource> AudioSource for AudioFaderSource<T> {
                     Command::Silence => {
                         self.level = *LEVEL_RANGE.start();
                         None
-                    },
+                    }
                     Command::FadeIn(rate) => Some((1, rate)),
                     Command::FadeOut(rate) => Some((-1, rate)),
                 };
 
                 self.state_opt = param_opt.map(|(delta, rate)| {
-                    let samples_per_db = (self.sample_rate as usize / rate as usize) * self.channels as usize;
+                    let samples_per_db =
+                        (self.sample_rate as usize / rate as usize) * self.channels as usize;
                     assert!(samples_per_db > 0);
 
                     State {
@@ -98,7 +97,7 @@ impl<T: AudioSource> AudioSource for AudioFaderSource<T> {
                         samples_processed: 0,
                     }
                 });
-            },
+            }
             Err(e) => match e {
                 TryRecvError::Empty => (),
                 TryRecvError::Disconnected => return AudioSourceState::Drop,
@@ -106,9 +105,7 @@ impl<T: AudioSource> AudioSource for AudioFaderSource<T> {
         }
 
         match self.inner_source.get_samples(buf) {
-            AudioSourceState::Paused => {
-                AudioSourceState::Paused
-            },
+            AudioSourceState::Paused => AudioSourceState::Paused,
             AudioSourceState::Playing => {
                 let buf_len = buf.len();
                 let mut i: usize = 0;
@@ -120,7 +117,11 @@ impl<T: AudioSource> AudioSource for AudioFaderSource<T> {
                     }
 
                     if let Some(state) = &mut self.state_opt {
-                        let level_stop = if state.delta > 0 { *LEVEL_RANGE.end() } else { *LEVEL_RANGE.start() };
+                        let level_stop = if state.delta > 0 {
+                            *LEVEL_RANGE.end()
+                        } else {
+                            *LEVEL_RANGE.start()
+                        };
                         if self.level == level_stop {
                             self.state_opt = None;
                             continue;
@@ -156,11 +157,9 @@ impl<T: AudioSource> AudioSource for AudioFaderSource<T> {
                     }
                 }
 
-                AudioSourceState::Playing                
-            },
-            AudioSourceState::Drop => {
-                AudioSourceState::Drop
-            },
+                AudioSourceState::Playing
+            }
+            AudioSourceState::Drop => AudioSourceState::Drop,
         }
     }
 }
@@ -171,9 +170,7 @@ pub struct AudioFaderHandle {
 
 impl AudioFaderHandle {
     fn new(tx: Sender<Command>) -> Self {
-        Self {
-            tx,
-        }
+        Self { tx }
     }
 
     pub fn silence(&self) {

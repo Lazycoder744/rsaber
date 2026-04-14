@@ -56,7 +56,7 @@ pub fn create_stats_window(model_reg: &mut ModelRegistry, stats: StatsRc, ui_loo
         move || {
             // If there are no strong reference to window (e.g. scene has been ended),
             // then signal thread to terminate.
-            
+
             let alive = Arc::new(AtomicBool::new(true));
 
             while alive.load(Ordering::Relaxed) {
@@ -67,13 +67,14 @@ pub fn create_stats_window(model_reg: &mut ModelRegistry, stats: StatsRc, ui_loo
 
                     move || {
                         match window_weak.upgrade() {
-                            Some(window) => { // TODO: use slint struct?
+                            Some(window) => {
+                                // TODO: use slint struct?
                                 window.set_fps(stats_inner.fps.try_into().unwrap());
                                 window.set_frame_time(stats_inner.frame_time.try_into().unwrap());
                                 window.set_draw_calls(stats_inner.draw_calls.try_into().unwrap());
                                 window.set_inst_num(stats_inner.inst_num.try_into().unwrap());
                                 window.set_inst_buf(stats_inner.inst_buf.try_into().unwrap());
-                            },
+                            }
                             None => alive.store(false, Ordering::Relaxed),
                         }
                     }
@@ -85,11 +86,25 @@ pub fn create_stats_window(model_reg: &mut ModelRegistry, stats: StatsRc, ui_loo
     });
 }
 
-pub fn create_saber(model_reg: &mut ModelRegistry, color_l: &Color, color_r: &Color) -> (Rc<Saber>, Rc<Saber>) {
-    let saber_param = SaberParam::new(color_l, &SABER_HANDLE_PHONG_PARAM, color_l, &SABER_RAY_PHONG_PARAM);
+pub fn create_saber(
+    model_reg: &mut ModelRegistry,
+    color_l: &Color,
+    color_r: &Color,
+) -> (Rc<Saber>, Rc<Saber>) {
+    let saber_param = SaberParam::new(
+        color_l,
+        &SABER_HANDLE_PHONG_PARAM,
+        color_l,
+        &SABER_RAY_PHONG_PARAM,
+    );
     let saber_l = model_reg.create(saber_param);
 
-    let saber_param = SaberParam::new(color_r, &SABER_HANDLE_PHONG_PARAM, color_r, &SABER_RAY_PHONG_PARAM);
+    let saber_param = SaberParam::new(
+        color_r,
+        &SABER_HANDLE_PHONG_PARAM,
+        color_r,
+        &SABER_RAY_PHONG_PARAM,
+    );
     let saber_r = model_reg.create(saber_param);
 
     (saber_l, saber_r)

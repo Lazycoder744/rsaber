@@ -6,8 +6,8 @@ use std::thread;
 
 use atomic::Atomic;
 use bytemuck::NoUninit;
-use rubato::{Fft, FixedSync, Resampler};
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
+use rubato::{Fft, FixedSync, Resampler};
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::errors::Error as symphonia_Error;
 use symphonia::core::io::{MediaSourceStream, ReadOnlySource};
@@ -57,31 +57,42 @@ impl AudioFile {
 
         // Open audio file.
 
-        let read = match asset_file.read() { // TODO: Report error on UI
+        let read = match asset_file.read() {
+            // TODO: Report error on UI
             Ok(read) => read,
             Err(_) => return rx,
         };
 
         let src = ReadOnlySource::new(read);
         let mss = MediaSourceStream::new(Box::new(src), Default::default());
-        let probe = match symphonia::default::get_probe().format(&Default::default(), mss, &Default::default(), &Default::default()) { // TODO: Report error on UI
+        let probe = match symphonia::default::get_probe().format(
+            &Default::default(),
+            mss,
+            &Default::default(),
+            &Default::default(),
+        ) {
+            // TODO: Report error on UI
             Ok(probe) => probe,
             Err(_) => return rx,
         };
         let mut format = probe.format;
 
-        let track = match format.default_track() { // TODO: Report error on UI
+        let track = match format.default_track() {
+            // TODO: Report error on UI
             Some(track) => track,
             None => return rx,
         };
-        let mut decoder = match symphonia::default::get_codecs().make(&track.codec_params, &Default::default()) { // TODO: Report error on UI
-            Ok(decoder) => decoder,
-            Err(_) => return rx,
-        };
+        let mut decoder =
+            match symphonia::default::get_codecs().make(&track.codec_params, &Default::default()) {
+                // TODO: Report error on UI
+                Ok(decoder) => decoder,
+                Err(_) => return rx,
+            };
         let track_id = track.id;
 
         let codec_params = decoder.codec_params();
-        if codec_params.channels.unwrap().count() != channels { // TODO: Report error on UI
+        if codec_params.channels.unwrap().count() != channels {
+            // TODO: Report error on UI
             return rx;
         }
         let decoder_sample_rate = codec_params.sample_rate.unwrap();
@@ -89,7 +100,15 @@ impl AudioFile {
         // Determine, if we need rate conversion.
 
         let rate_conv_opt = if decoder_sample_rate != sample_rate {
-            let rate_conv = Fft::<f32>::new(decoder_sample_rate as usize, sample_rate as usize, RATE_CONV_CHUNK, 1, channels, FixedSync::Both).expect("Unable to create sample rate converter");
+            let rate_conv = Fft::<f32>::new(
+                decoder_sample_rate as usize,
+                sample_rate as usize,
+                RATE_CONV_CHUNK,
+                1,
+                channels,
+                FixedSync::Both,
+            )
+            .expect("Unable to create sample rate converter");
             Some(rate_conv)
         } else {
             None
@@ -110,11 +129,11 @@ impl AudioFile {
                                 }
 
                                 break None; // TODO: Report error on UI
-                            },
+                            }
                             _ => {
                                 break None; // TODO: Report error on UI
                             }
-                        }
+                        },
                     };
 
                     while !format.metadata().is_latest() {
@@ -125,7 +144,8 @@ impl AudioFile {
                         continue;
                     }
 
-                    let decoded = match decoder.decode(&packet) { // TODO: Report error on UI
+                    let decoded = match decoder.decode(&packet) {
+                        // TODO: Report error on UI
                         Ok(decoded) => decoded,
                         Err(_) => break None,
                     };
@@ -135,7 +155,8 @@ impl AudioFile {
                         continue;
                     }
 
-                    let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
+                    let mut buf =
+                        SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
                     buf.copy_interleaved_ref(decoded);
 
                     break Some((buf, decoded_len));
@@ -154,7 +175,8 @@ impl AudioFile {
                 let mut in_i = 0;
                 let mut end = false;
 
-                while !end { // Process entire input.
+                while !end {
+                    // Process entire input.
                     // Collect the required number of input frames for rate converter.
 
                     let in_next = rate_conv.input_frames_next();
@@ -168,14 +190,10 @@ impl AudioFile {
                         if decoded_buf_opt.is_none() {
                             match do_decode() {
                                 Some((buf, len)) => {
-                                    let decoded_buf = DecodedBuf {
-                                        buf,
-                                        i: 0,
-                                        len,
-                                    };
+                                    let decoded_buf = DecodedBuf { buf, i: 0, len };
 
                                     decoded_buf_opt = Some(decoded_buf);
-                                },
+                                }
                                 None => {
                                     // At EOF, fill remaining input with silence.
 
@@ -185,7 +203,7 @@ impl AudioFile {
                                     in_i += todo;
                                     end = true;
                                     break;
-                                },
+                                }
                             }
                         }
 
@@ -196,7 +214,8 @@ impl AudioFile {
                         todo = (decoded_buf.len - decoded_buf.i).min(todo);
                         assert!(todo > 0);
 
-                        let decoded_buf_sl = &decoded_buf.buf.samples()[(decoded_buf.i * channels)..((decoded_buf.i + todo) * channels)];
+                        let decoded_buf_sl = &decoded_buf.buf.samples()
+                            [(decoded_buf.i * channels)..((decoded_buf.i + todo) * channels)];
                         let in_buf_sl = &mut in_buf[(in_i * channels)..((in_i + todo) * channels)];
                         in_buf_sl.copy_from_slice(decoded_buf_sl);
 
@@ -217,8 +236,11 @@ impl AudioFile {
                     // - out_buf: not possible to obtain a reference to the internal buffer (see send below).
 
                     let in_adapter = Self::create_rate_conv_adapter(&mut in_buf, channels, in_max); // TODO: We don't need mutability for in_buf.
-                    let mut out_adapter = Self::create_rate_conv_adapter(&mut out_buf, channels, out_max);
-                    let (in_rd, out_wr) = rate_conv.process_into_buffer(&in_adapter, &mut out_adapter, None).expect("Unable to do rate conversion");
+                    let mut out_adapter =
+                        Self::create_rate_conv_adapter(&mut out_buf, channels, out_max);
+                    let (in_rd, out_wr) = rate_conv
+                        .process_into_buffer(&in_adapter, &mut out_adapter, None)
+                        .expect("Unable to do rate conversion");
 
                     // Consume input buffer.
 
@@ -256,7 +278,11 @@ impl AudioFile {
         Box::from_iter(iter::repeat_n(0.0_f32, channels * len))
     }
 
-    fn create_rate_conv_adapter(buf: &mut [f32], channels: usize, len: usize) -> InterleavedSlice<&mut [f32]> {
+    fn create_rate_conv_adapter(
+        buf: &mut [f32],
+        channels: usize,
+        len: usize,
+    ) -> InterleavedSlice<&mut [f32]> {
         InterleavedSlice::new_mut(buf, channels, len).expect("Unable to create adapter")
     }
 }
@@ -277,7 +303,7 @@ enum State {
 }
 
 struct DecodedBuf {
-    buf: SampleBuffer::<f32>,
+    buf: SampleBuffer<f32>,
     i: usize,
     len: usize,
 }
@@ -297,36 +323,30 @@ pub struct AudioFileSource {
 
 impl AudioFileSource {
     fn new(inner: InnerRc, rx: Receiver<f32>) -> Self {
-        Self {
-            inner,
-            rx,
-        }
+        Self { inner, rx }
     }
 }
 
 impl AudioSource for AudioFileSource {
     fn get_samples(&mut self, buf: &mut [f32]) -> AudioSourceState {
         match self.inner.state.load(Ordering::Relaxed) {
-            State::Paused => {
-                AudioSourceState::Paused
-            },
+            State::Paused => AudioSourceState::Paused,
             State::Playing => {
                 let len = self.rx.recv(buf); // TODO: It should never block.
 
                 if len == 0 {
                     self.inner.at_eof.store(true, Ordering::Relaxed);
                     return AudioSourceState::Drop;
-                } else if len < buf.len() { // TODO: Do this one in engine?
+                } else if len < buf.len() {
+                    // TODO: Do this one in engine?
                     // At EOF, pad with silence.
 
                     buf[len..].fill(0.0);
                 }
 
                 AudioSourceState::Playing
-            },
-            State::Drop => {
-                AudioSourceState::Drop
-            },
+            }
+            State::Drop => AudioSourceState::Drop,
         }
     }
 }
@@ -337,9 +357,7 @@ pub struct AudioFileHandle {
 
 impl AudioFileHandle {
     fn new(inner: InnerRc) -> Self {
-        Self {
-            inner,
-        }
+        Self { inner }
     }
 
     pub fn at_eof(&self) -> bool {

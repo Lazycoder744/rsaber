@@ -1,14 +1,20 @@
 use std::cell::RefCell;
 
 use cgmath::{InnerSpace, Matrix4, Quaternion, Vector3};
-use wgpu::{BufferUsages, Device, Extent3d, FilterMode, SamplerDescriptor, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
+use wgpu::{
+    BufferUsages, Device, Extent3d, FilterMode, SamplerDescriptor, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureUsages,
+};
 
 use crate::asset::AssetManagerRc;
-use crate::model::{InstShaderImplType, InstShaderType, InstWindowBuf, Mesh, Model, ModelFactory, ModelHandle, PrimitiveStateType, SamplerId, Submesh, TextureId, VertexPos, VertexShaderType, SABER_DIR};
+use crate::model::{
+    InstShaderImplType, InstShaderType, InstWindowBuf, Mesh, Model, ModelFactory, ModelHandle,
+    PrimitiveStateType, SABER_DIR, SamplerId, Submesh, TextureId, VertexPos, VertexShaderType,
+};
 use crate::scene::ScenePose;
-use crate::ui::{UIEvent, UIManagerRc, UIWindow};
 use crate::ui::slintimpl;
+use crate::ui::{UIEvent, UIManagerRc, UIWindow};
 
 const SIZE: f32 = 0.5;
 
@@ -27,10 +33,12 @@ impl<F: FnOnce() -> C + Send + 'static, C: slintimpl::ComponentHandle + 'static>
             height,
             func,
         }
-    }    
+    }
 }
 
-impl<F: FnOnce() -> C + Send + 'static, C: slintimpl::ComponentHandle + 'static> ModelFactory for WindowParam<F> {
+impl<F: FnOnce() -> C + Send + 'static, C: slintimpl::ComponentHandle + 'static> ModelFactory
+    for WindowParam<F>
+{
     type Model = Window;
 
     fn get_name() -> &'static str {
@@ -41,22 +49,29 @@ impl<F: FnOnce() -> C + Send + 'static, C: slintimpl::ComponentHandle + 'static>
         // We don't have .obj file for window, calculate mesh.
 
         let vertexes = [
-            VertexPos { pos: [-SIZE, 0.0, -SIZE] },
-            VertexPos { pos: [SIZE, 0.0, -SIZE] },
-            VertexPos { pos: [-SIZE, 0.0, SIZE] },
-            VertexPos { pos: [SIZE, 0.0, SIZE] },
+            VertexPos {
+                pos: [-SIZE, 0.0, -SIZE],
+            },
+            VertexPos {
+                pos: [SIZE, 0.0, -SIZE],
+            },
+            VertexPos {
+                pos: [-SIZE, 0.0, SIZE],
+            },
+            VertexPos {
+                pos: [SIZE, 0.0, SIZE],
+            },
         ];
 
-        let indexes: [u16; 6] = [
+        let indexes: [u16; 6] = [0, 1, 2, 1, 3, 2];
+
+        let submesh = Submesh::new(
             0,
-            1,
-            2,
-            1,
-            3,
-            2,
-        ];
-
-        let submesh = Submesh::new(0, indexes.len() as u32, 0, PrimitiveStateType::TriangleList, InstShaderType::Window); // 0
+            indexes.len() as u32,
+            0,
+            PrimitiveStateType::TriangleList,
+            InstShaderType::Window,
+        ); // 0
 
         // Create buffers.
 
@@ -77,7 +92,13 @@ impl<F: FnOnce() -> C + Send + 'static, C: slintimpl::ComponentHandle + 'static>
         Mesh::new(vertex_buf, index_buf, VertexShaderType::Pos, submeshes)
     }
 
-    fn create(self, handle: ModelHandle, device: &Device, inst_sh_impls: &mut [InstShaderImplType], ui_manager: UIManagerRc) -> Self::Model {
+    fn create(
+        self,
+        handle: ModelHandle,
+        device: &Device,
+        inst_sh_impls: &mut [InstShaderImplType],
+        ui_manager: UIManagerRc,
+    ) -> Self::Model {
         Window::new(self, handle, device, inst_sh_impls, ui_manager)
     }
 }
@@ -97,7 +118,13 @@ struct Inner {
 }
 
 impl Window {
-    fn new<F: FnOnce() -> C + Send + 'static, C: slintimpl::ComponentHandle + 'static>(param: WindowParam<F>, handle: ModelHandle, device: &Device, inst_sh_impls: &mut [InstShaderImplType], ui_manager: UIManagerRc) -> Self {
+    fn new<F: FnOnce() -> C + Send + 'static, C: slintimpl::ComponentHandle + 'static>(
+        param: WindowParam<F>,
+        handle: ModelHandle,
+        device: &Device,
+        inst_sh_impls: &mut [InstShaderImplType],
+        ui_manager: UIManagerRc,
+    ) -> Self {
         let inst_window = if let InstShaderImplType::Window(inst_window) = &mut inst_sh_impls[0] {
             inst_window
         } else {
@@ -165,7 +192,8 @@ impl Window {
         self.inner.borrow_mut().rot = *rot;
     }
 
-    pub fn intersect(&self, pose: &dyn ScenePose) -> Option<(f32, f32, f32)> { // TODO: introduce struct for return type?
+    pub fn intersect(&self, pose: &dyn ScenePose) -> Option<(f32, f32, f32)> {
+        // TODO: introduce struct for return type?
         // Test for visibility.
 
         if !self.handle.get_visible(0) {
@@ -227,7 +255,9 @@ impl Model for Window {
         assert!(inst_index == 0);
 
         let inner = self.inner.borrow();
-        let model_m = Matrix4::from_translation(inner.pos) * Matrix4::from(inner.rot) * Matrix4::from_nonuniform_scale(inner.scale.0, 1.0, inner.scale.1);
+        let model_m = Matrix4::from_translation(inner.pos)
+            * Matrix4::from(inner.rot)
+            * Matrix4::from_nonuniform_scale(inner.scale.0, 1.0, inner.scale.1);
         InstWindowBuf::fill(self.sampler_id, self.texture_id, &model_m)
     }
 }

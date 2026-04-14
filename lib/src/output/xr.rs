@@ -7,26 +7,32 @@ use std::time::{Duration, Instant};
 
 use ash::vk::Handle;
 use cgmath::{Angle, Deg, Matrix4, Quaternion, Rad, Rotation3, Vector2, Vector3, Zero};
-use wgpu::{Device, DeviceDescriptor, Extent3d, Features, Instance, Queue, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView};
+use wgpu::{
+    Device, DeviceDescriptor, Extent3d, Features, Instance, Queue, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureUsages, TextureView,
+};
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
 
-use crate::{APP_NAME, APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_VERSION_PATCH, Main};
+use crate::output::{
+    DEPTH_FORMAT, FAR_Z, Frame, NEAR_Z, OutputInfo, ViewMat, create_texture, get_default_features,
+    get_default_limits, get_sample_count,
+};
 use crate::scene::{SceneInput, ScenePose, ScenePoseScroll};
-use crate::output::{DEPTH_FORMAT, NEAR_Z, FAR_Z, Frame, OutputInfo, ViewMat, create_texture, get_default_features, get_default_limits, get_sample_count};
+use crate::{APP_NAME, APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_VERSION_PATCH, Main};
 
 type OutputViewMat = [ViewMat; 2];
 
-const XR_VALVE_FRAME_CONTROLLER_INTERACTION_EXTENSION_NAME: &[u8] = b"XR_VALVE_frame_controller_interaction\0"; // See https://partner.steamgames.com/doc/steamframe/engines/custom .
+const XR_VALVE_FRAME_CONTROLLER_INTERACTION_EXTENSION_NAME: &[u8] =
+    b"XR_VALVE_frame_controller_interaction\0"; // See https://partner.steamgames.com/doc/steamframe/engines/custom .
 
-const WGPU_FORMATS: [TextureFormat; 2] = [TextureFormat::Bgra8UnormSrgb, TextureFormat::Rgba8UnormSrgb];
+const WGPU_FORMATS: [TextureFormat; 2] =
+    [TextureFormat::Bgra8UnormSrgb, TextureFormat::Rgba8UnormSrgb];
 const NOTRUNNING_SLEEP: f32 = 0.1; // [s]
-const MY_TO_OPENXR_M: Matrix4<f32> = Matrix4::new( // my -> openxr
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 0.0, -1.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 0.0, 1.0
+const MY_TO_OPENXR_M: Matrix4<f32> = Matrix4::new(
+    // my -> openxr
+    1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
 );
 const SCROLL_SPEED: f32 = 1000.0; // [pixels/s]
 
@@ -111,7 +117,9 @@ impl XROutput {
         let app_version_minor: u8 = APP_VERSION_MINOR.parse().unwrap();
         let app_version_patch: u8 = APP_VERSION_PATCH.parse().unwrap();
 
-        let app_version = (app_version_major as u32) << 24 | (app_version_minor as u32) << 16 | app_version_patch as u32;
+        let app_version = (app_version_major as u32) << 24
+            | (app_version_minor as u32) << 16
+            | app_version_patch as u32;
 
         let wgpu_hal_flags = wgpu::InstanceFlags::default();
 
@@ -127,7 +135,7 @@ impl XROutput {
         // - Don't let OpenXR to create vulkan instance and device (khr_vulkan_enable2).
         // - Instead, we create it manually (khr_vulkan_enable), since we need to tell
         //   wgpu which extensions are actually enabled.
-        
+
         let xr_app_info = openxr::ApplicationInfo {
             application_name: APP_NAME,
             application_version: app_version,
@@ -136,7 +144,9 @@ impl XROutput {
             ..Default::default()
         };
 
-        let xr_ext_avail = xr_entry.enumerate_extensions().expect("Unable to query OpenXR extensions");
+        let xr_ext_avail = xr_entry
+            .enumerate_extensions()
+            .expect("Unable to query OpenXR extensions");
 
         let mut xr_ext = openxr::ExtensionSet::default();
         xr_ext.khr_vulkan_enable = true;
@@ -149,7 +159,11 @@ impl XROutput {
         // profile extension natively, so we have to use ExtensionSet->other.
         // TODO: On openxr upgrade, check if it is supporting extension.
 
-        if let Some(ext_name) = xr_ext_avail.other.iter().find(|ext_name| *ext_name == XR_VALVE_FRAME_CONTROLLER_INTERACTION_EXTENSION_NAME) {
+        if let Some(ext_name) = xr_ext_avail
+            .other
+            .iter()
+            .find(|ext_name| *ext_name == XR_VALVE_FRAME_CONTROLLER_INTERACTION_EXTENSION_NAME)
+        {
             xr_ext.other.push(ext_name.to_vec());
         }
 
@@ -158,30 +172,50 @@ impl XROutput {
             xr_ext.khr_android_create_instance = true;
         }
 
-        let xr_inst = xr_entry.create_instance(&xr_app_info, &xr_ext, &[]).expect("Unable to create OpenXR instance");
-        let xr_system = xr_inst.system(openxr::FormFactor::HEAD_MOUNTED_DISPLAY).expect("OpenXR system() failed, make sure the headset is connected");
+        let xr_inst = xr_entry
+            .create_instance(&xr_app_info, &xr_ext, &[])
+            .expect("Unable to create OpenXR instance");
+        let xr_system = xr_inst
+            .system(openxr::FormFactor::HEAD_MOUNTED_DISPLAY)
+            .expect("OpenXR system() failed, make sure the headset is connected");
 
         // TODO: Use array/hashmap to search for tweaks.
-        let xr_system_prop = xr_inst.system_properties(xr_system).expect("OpenXR system_properties() failed");
-        let xr_hardware = if xr_system_prop.vendor_id == 10291 && xr_system_prop.system_name == "Oculus Quest2" {
-            XRHardware::Oculus_Quest2
-        } else if xr_system_prop.vendor_id == 10462 && xr_system_prop.system_name == "SteamVR/OpenXR : playstation_vr2" {
-            XRHardware::Sony_PlayStationVR2
-        } else {
-            XRHardware::Generic
-        };
+        let xr_system_prop = xr_inst
+            .system_properties(xr_system)
+            .expect("OpenXR system_properties() failed");
+        let xr_hardware =
+            if xr_system_prop.vendor_id == 10291 && xr_system_prop.system_name == "Oculus Quest2" {
+                XRHardware::Oculus_Quest2
+            } else if xr_system_prop.vendor_id == 10462
+                && xr_system_prop.system_name == "SteamVR/OpenXR : playstation_vr2"
+            {
+                XRHardware::Sony_PlayStationVR2
+            } else {
+                XRHardware::Generic
+            };
 
         // Check Vulkan/OpenXR compatibility.
 
-        let xr_gfx_req = xr_inst.graphics_requirements::<openxr::Vulkan>(xr_system).expect("OpenXR graphics_requirements() failed");
-        let vk_version = unsafe { vk_entry.try_enumerate_instance_version() }.expect("Vulkan try_enumerate_instance_version() failed").unwrap_or(ash::vk::API_VERSION_1_0);
-        let vk_version_conv = openxr::Version::new(ash::vk::api_version_major(vk_version).try_into().unwrap(), ash::vk::api_version_minor(vk_version).try_into().unwrap(), ash::vk::api_version_patch(vk_version));
+        let xr_gfx_req = xr_inst
+            .graphics_requirements::<openxr::Vulkan>(xr_system)
+            .expect("OpenXR graphics_requirements() failed");
+        let vk_version = unsafe { vk_entry.try_enumerate_instance_version() }
+            .expect("Vulkan try_enumerate_instance_version() failed")
+            .unwrap_or(ash::vk::API_VERSION_1_0);
+        let vk_version_conv = openxr::Version::new(
+            ash::vk::api_version_major(vk_version).try_into().unwrap(),
+            ash::vk::api_version_minor(vk_version).try_into().unwrap(),
+            ash::vk::api_version_patch(vk_version),
+        );
 
         // TODO: versions on my system: vk_version_conv = 1.4.309, xr_gfx_req.max_api_version_supported = 1.2.0
         // So at the moment, don't check for max_api_version_supported.
 
         if vk_version_conv < xr_gfx_req.min_api_version_supported {
-            panic!("Vulkan version {} mismatch, OpenXR min supported version = {}", vk_version_conv, xr_gfx_req.min_api_version_supported);
+            panic!(
+                "Vulkan version {} mismatch, OpenXR min supported version = {}",
+                vk_version_conv, xr_gfx_req.min_api_version_supported
+            );
         }
 
         // Create Vulkan instance:
@@ -196,8 +230,14 @@ impl XROutput {
             .engine_name(&vk_app_name)
             .engine_version(app_version);
 
-        let wgpu_exts = wgpu::hal::vulkan::Instance::desired_extensions(&vk_entry, vk_version, wgpu_hal_flags).expect("wgpu desired_extensions() failed").into_iter().map(|s| s.to_str().unwrap());
-        let xr_exts_str = xr_inst.vulkan_legacy_instance_extensions(xr_system).expect("OpenXR vulkan_legacy_instance_extensions() failed");
+        let wgpu_exts =
+            wgpu::hal::vulkan::Instance::desired_extensions(&vk_entry, vk_version, wgpu_hal_flags)
+                .expect("wgpu desired_extensions() failed")
+                .into_iter()
+                .map(|s| s.to_str().unwrap());
+        let xr_exts_str = xr_inst
+            .vulkan_legacy_instance_extensions(xr_system)
+            .expect("OpenXR vulkan_legacy_instance_extensions() failed");
         let xr_exts = xr_exts_str.split_ascii_whitespace();
 
         let exts: HashSet<_> = HashSet::from_iter(wgpu_exts.chain(xr_exts)); // Deduplicate.
@@ -208,17 +248,21 @@ impl XROutput {
             .application_info(&vk_app_info)
             .enabled_extension_names(&exts_c_ptr);
 
-        let vk_inst = unsafe { vk_entry.create_instance(&vk_inst_create_info, None) }.expect("Unable to create Vulkan instance");
+        let vk_inst = unsafe { vk_entry.create_instance(&vk_inst_create_info, None) }
+            .expect("Unable to create Vulkan instance");
         drop_guard.lock().unwrap().set_vk_inst(vk_inst.clone());
 
         // Get suitable Vulkan physical device.
 
-        let vk_phys_dev_handle = unsafe { xr_inst.vulkan_graphics_device(xr_system, vk_inst.handle().as_raw() as _) }.expect("OpenXR vulkan_graphics_device() failed");
+        let vk_phys_dev_handle =
+            unsafe { xr_inst.vulkan_graphics_device(xr_system, vk_inst.handle().as_raw() as _) }
+                .expect("OpenXR vulkan_graphics_device() failed");
         let vk_phys_dev = ash::vk::PhysicalDevice::from_raw(vk_phys_dev_handle as _);
 
         // Find graphics queue.
 
-        let vk_queue_families = unsafe { vk_inst.get_physical_device_queue_family_properties(vk_phys_dev) };
+        let vk_queue_families =
+            unsafe { vk_inst.get_physical_device_queue_family_properties(vk_phys_dev) };
         let vk_queue_family_index = vk_queue_families
             .into_iter()
             .enumerate()
@@ -238,7 +282,10 @@ impl XROutput {
 
         // Init wgpu.
 
-        let wgpu_hal_exts: Vec<_> = exts_c.into_iter().map(|s| Box::leak(Box::new(s)).as_c_str()).collect(); // TODO: How to do it without leak?
+        let wgpu_hal_exts: Vec<_> = exts_c
+            .into_iter()
+            .map(|s| Box::leak(Box::new(s)).as_c_str())
+            .collect(); // TODO: How to do it without leak?
 
         #[allow(unused_assignments)]
         #[allow(unused_mut)]
@@ -252,19 +299,44 @@ impl XROutput {
 
         let drop_callback: Option<wgpu::hal::DropCallback> = {
             let drop_guard = Arc::clone(&drop_guard);
-            Some(Box::new(move || { let _ = Arc::strong_count(&drop_guard); }))
+            Some(Box::new(move || {
+                let _ = Arc::strong_count(&drop_guard);
+            }))
         };
-        let wgpu_hal_inst = unsafe { wgpu::hal::vulkan::Instance::from_raw(vk_entry, vk_inst.clone(), vk_version, android_sdk_version, None, wgpu_hal_exts, wgpu_hal_flags, Default::default(), false, drop_callback) }.expect("wgpu from_raw() failed");
-        let wgpu_hal_adapter = wgpu_hal_inst.expose_adapter(vk_phys_dev).expect("wgpu expose_adapter() failed");
+        let wgpu_hal_inst = unsafe {
+            wgpu::hal::vulkan::Instance::from_raw(
+                vk_entry,
+                vk_inst.clone(),
+                vk_version,
+                android_sdk_version,
+                None,
+                wgpu_hal_exts,
+                wgpu_hal_flags,
+                Default::default(),
+                false,
+                drop_callback,
+            )
+        }
+        .expect("wgpu from_raw() failed");
+        let wgpu_hal_adapter = wgpu_hal_inst
+            .expose_adapter(vk_phys_dev)
+            .expect("wgpu expose_adapter() failed");
 
         // Create Vulkan device:
         // - Query wgpu required extensions.
         // - Query OpenXR required extensions.
 
-        let wgpu_features = get_default_features() | Features::MULTIVIEW | Features::MULTISAMPLE_ARRAY;
+        let wgpu_features =
+            get_default_features() | Features::MULTIVIEW | Features::MULTISAMPLE_ARRAY;
 
-        let wgpu_exts = wgpu_hal_adapter.adapter.required_device_extensions(wgpu_features).into_iter().map(|s| s.to_str().unwrap());
-        let xr_exts_str = xr_inst.vulkan_legacy_device_extensions(xr_system).expect("OpenXR vulkan_legacy_device_extensions() failed");
+        let wgpu_exts = wgpu_hal_adapter
+            .adapter
+            .required_device_extensions(wgpu_features)
+            .into_iter()
+            .map(|s| s.to_str().unwrap());
+        let xr_exts_str = xr_inst
+            .vulkan_legacy_device_extensions(xr_system)
+            .expect("OpenXR vulkan_legacy_device_extensions() failed");
         let xr_exts = xr_exts_str.split_ascii_whitespace();
 
         let mut exts: HashSet<_> = HashSet::from_iter(wgpu_exts.chain(xr_exts)); // Deduplicate.
@@ -276,11 +348,17 @@ impl XROutput {
             .queue_create_infos(&vk_queue_create_infos)
             .enabled_extension_names(&exts_c_ptr);
 
-        let wgpu_phys_exts: Box<[_]> = exts_c.into_iter().map(|s| Box::leak(Box::new(s)).as_c_str()).collect(); // TODO: How to do it without leak?
-        let mut wgpu_phys_features = wgpu_hal_adapter.adapter.physical_device_features(&wgpu_phys_exts, wgpu_features);
+        let wgpu_phys_exts: Box<[_]> = exts_c
+            .into_iter()
+            .map(|s| Box::leak(Box::new(s)).as_c_str())
+            .collect(); // TODO: How to do it without leak?
+        let mut wgpu_phys_features = wgpu_hal_adapter
+            .adapter
+            .physical_device_features(&wgpu_phys_exts, wgpu_features);
         let vk_dev_create_info2 = wgpu_phys_features.add_to_device_create(vk_dev_create_info);
 
-        let vk_dev = unsafe { vk_inst.create_device(vk_phys_dev, &vk_dev_create_info2, None) }.expect("Vulkan create_device() failed");
+        let vk_dev = unsafe { vk_inst.create_device(vk_phys_dev, &vk_dev_create_info2, None) }
+            .expect("Vulkan create_device() failed");
         drop_guard.lock().unwrap().set_vk_dev(vk_dev.clone());
 
         // Create OpenXR session.
@@ -293,25 +371,44 @@ impl XROutput {
             queue_index: 0,
         };
 
-        let (xr_session, xr_waiter, xr_stream) = unsafe { xr_inst.create_session_with_guard::<openxr::Vulkan>(xr_system, &xr_session_create_info, Box::new(Arc::clone(&drop_guard))) }.expect("Unable to create OpenXR session");
+        let (xr_session, xr_waiter, xr_stream) = unsafe {
+            xr_inst.create_session_with_guard::<openxr::Vulkan>(
+                xr_system,
+                &xr_session_create_info,
+                Box::new(Arc::clone(&drop_guard)),
+            )
+        }
+        .expect("Unable to create OpenXR session");
 
         // Set display refresh rate to max.
 
         if xr_ext.fb_display_refresh_rate {
-            let rates = xr_session.enumerate_display_refresh_rates().expect("Unable to query display refresh rates");
+            let rates = xr_session
+                .enumerate_display_refresh_rates()
+                .expect("Unable to query display refresh rates");
             if let Some(rate) = rates.into_iter().reduce(f32::max) {
-                xr_session.request_display_refresh_rate(rate).expect("Unable to set display refresh rate");
+                xr_session
+                    .request_display_refresh_rate(rate)
+                    .expect("Unable to set display refresh rate");
             }
         }
 
         // Query color formats.
 
-        let xr_formats = xr_session.enumerate_swapchain_formats().expect("OpenXR enumerate_swapchain_formats() failed");
+        let xr_formats = xr_session
+            .enumerate_swapchain_formats()
+            .expect("OpenXR enumerate_swapchain_formats() failed");
         let mut format_info = None;
 
-        for xr_format in xr_formats { // TODO: how to figure out wgpu TextureFormat from raw format?
+        for xr_format in xr_formats {
+            // TODO: how to figure out wgpu TextureFormat from raw format?
             format_info = WGPU_FORMATS.iter().find_map(|wgpu_format| {
-                if wgpu_hal_adapter.adapter.texture_format_as_raw(*wgpu_format).as_raw() == xr_format as i32 {
+                if wgpu_hal_adapter
+                    .adapter
+                    .texture_format_as_raw(*wgpu_format)
+                    .as_raw()
+                    == xr_format as i32
+                {
                     Some((xr_format, *wgpu_format))
                 } else {
                     None
@@ -332,10 +429,24 @@ impl XROutput {
 
         let drop_callback: Option<wgpu::hal::DropCallback> = {
             let drop_guard = Arc::clone(&drop_guard);
-            Some(Box::new(move || { let _ = Arc::strong_count(&drop_guard); }))
+            Some(Box::new(move || {
+                let _ = Arc::strong_count(&drop_guard);
+            }))
         };
-        let wgpu_hal_dev = unsafe { wgpu_hal_adapter.adapter.device_from_raw(vk_dev.clone(), drop_callback, &wgpu_phys_exts, wgpu_features, &Default::default(), &Default::default(), vk_queue_family_index, 0) }.expect("wgpu device_from_raw() failed");
-        
+        let wgpu_hal_dev = unsafe {
+            wgpu_hal_adapter.adapter.device_from_raw(
+                vk_dev.clone(),
+                drop_callback,
+                &wgpu_phys_exts,
+                wgpu_features,
+                &Default::default(),
+                &Default::default(),
+                vk_queue_family_index,
+                0,
+            )
+        }
+        .expect("wgpu device_from_raw() failed");
+
         let wgpu_inst = unsafe { Instance::from_hal::<wgpu::hal::vulkan::Api>(wgpu_hal_inst) };
         let wgpu_adapter = unsafe { wgpu_inst.create_adapter_from_hal(wgpu_hal_adapter) };
 
@@ -347,18 +458,31 @@ impl XROutput {
             required_limits: wgpu_limits,
             ..Default::default()
         };
-        let (device, queue) = unsafe { wgpu_adapter.create_device_from_hal(wgpu_hal_dev, &device_desc) }.expect("wgpu create_device_from_hal() failed");
+        let (device, queue) =
+            unsafe { wgpu_adapter.create_device_from_hal(wgpu_hal_dev, &device_desc) }
+                .expect("wgpu create_device_from_hal() failed");
 
         let adapter_info = device.adapter_info();
         let diags = vec![
             format!("Adapter: {}", adapter_info.name),
-            format!("Driver: {}/{}", adapter_info.driver, adapter_info.driver_info),
-            format!("XR: {}/{}", xr_system_prop.vendor_id, xr_system_prop.system_name),
+            format!(
+                "Driver: {}/{}",
+                adapter_info.driver, adapter_info.driver_info
+            ),
+            format!(
+                "XR: {}/{}",
+                xr_system_prop.vendor_id, xr_system_prop.system_name
+            ),
         ];
 
         // Setup swapchain.
 
-        let xr_views = xr_inst.enumerate_view_configuration_views(xr_system, openxr::ViewConfigurationType::PRIMARY_STEREO).expect("OpenXR enumerate_view_configuration_views() failed");
+        let xr_views = xr_inst
+            .enumerate_view_configuration_views(
+                xr_system,
+                openxr::ViewConfigurationType::PRIMARY_STEREO,
+            )
+            .expect("OpenXR enumerate_view_configuration_views() failed");
         assert!(xr_views.len() == 2); // Make sure we have stereo configuration.
         assert!(xr_views[0] == xr_views[1]);
 
@@ -371,7 +495,7 @@ impl XROutput {
 
                 width = 1832;
                 height = 1920;
-            },
+            }
             XRHardware::Sony_PlayStationVR2 => {
                 // Tweak view size, since OpenXR reported values are incorrect:
                 // - recommended_image_rect_width: 4080
@@ -379,10 +503,10 @@ impl XROutput {
 
                 width = 2000;
                 height = 2040;
-            },
+            }
             _ => (),
         }
-        
+
         let xr_swapchain_create_info = openxr::SwapchainCreateInfo {
             create_flags: openxr::SwapchainCreateFlags::EMPTY,
             usage_flags: openxr::SwapchainUsageFlags::COLOR_ATTACHMENT,
@@ -395,8 +519,12 @@ impl XROutput {
             mip_count: 1,
         };
 
-        let xr_swapchain = xr_session.create_swapchain(&xr_swapchain_create_info).expect("OpenXR create_swapchain() failed");
-        let xr_swapchain_imgs = xr_swapchain.enumerate_images().expect("OpenXR enumerate_images() failed");
+        let xr_swapchain = xr_session
+            .create_swapchain(&xr_swapchain_create_info)
+            .expect("OpenXR create_swapchain() failed");
+        let xr_swapchain_imgs = xr_swapchain
+            .enumerate_images()
+            .expect("OpenXR enumerate_images() failed");
 
         let wgpu_color_descr_hal = wgpu::hal::TextureDescriptor {
             label: None,
@@ -431,12 +559,27 @@ impl XROutput {
 
         let wgpu_hal_dev = unsafe { device.as_hal::<wgpu::hal::vulkan::Api>().unwrap() };
 
-        let color_views = xr_swapchain_imgs.into_iter().map(|texture_raw| {
-            let texture_handle = ash::vk::Image::from_raw(texture_raw);
-            let texture_hal = unsafe { wgpu_hal_dev.texture_from_raw(texture_handle, &wgpu_color_descr_hal, Some(Box::new(|| {})), wgpu::hal::vulkan::TextureMemory::External) }; // Don't take ownership of the texture. // TODO: use dropguard?
-            let texture = unsafe { device.create_texture_from_hal::<wgpu::hal::vulkan::Api>(texture_hal, &wgpu_color_descr) };
-            texture.create_view(&Default::default())
-        }).collect();
+        let color_views = xr_swapchain_imgs
+            .into_iter()
+            .map(|texture_raw| {
+                let texture_handle = ash::vk::Image::from_raw(texture_raw);
+                let texture_hal = unsafe {
+                    wgpu_hal_dev.texture_from_raw(
+                        texture_handle,
+                        &wgpu_color_descr_hal,
+                        Some(Box::new(|| {})),
+                        wgpu::hal::vulkan::TextureMemory::External,
+                    )
+                }; // Don't take ownership of the texture. // TODO: use dropguard?
+                let texture = unsafe {
+                    device.create_texture_from_hal::<wgpu::hal::vulkan::Api>(
+                        texture_hal,
+                        &wgpu_color_descr,
+                    )
+                };
+                texture.create_view(&Default::default())
+            })
+            .collect();
 
         // Setup multisample buffer.
 
@@ -456,23 +599,47 @@ impl XROutput {
 
         // Setup input.
 
-        let xr_space = xr_session.create_reference_space(openxr::ReferenceSpaceType::STAGE, openxr::Posef::IDENTITY).expect("OpenXR create_reference_space() failed");
+        let xr_space = xr_session
+            .create_reference_space(openxr::ReferenceSpaceType::STAGE, openxr::Posef::IDENTITY)
+            .expect("OpenXR create_reference_space() failed");
 
-        let xr_action_set = xr_inst.create_action_set("input", "Input", 0).expect("OpenXR create_action_set() failed");
+        let xr_action_set = xr_inst
+            .create_action_set("input", "Input", 0)
+            .expect("OpenXR create_action_set() failed");
 
-        let xr_left_action = xr_action_set.create_action::<openxr::Posef>("left_hand", "Left Hand", &[]).expect("OpenXR create_action() failed");
-        let xr_right_action = xr_action_set.create_action::<openxr::Posef>("right_hand", "Right Hand", &[]).expect("OpenXR create_action() failed");
+        let xr_left_action = xr_action_set
+            .create_action::<openxr::Posef>("left_hand", "Left Hand", &[])
+            .expect("OpenXR create_action() failed");
+        let xr_right_action = xr_action_set
+            .create_action::<openxr::Posef>("right_hand", "Right Hand", &[])
+            .expect("OpenXR create_action() failed");
 
-        let xr_left_click = xr_action_set.create_action::<bool>("left_click", "Left Click", &[]).expect("OpenXR create_action() failed");
-        let xr_right_click = xr_action_set.create_action::<bool>("right_click", "Right Click", &[]).expect("OpenXR create_action() failed");
+        let xr_left_click = xr_action_set
+            .create_action::<bool>("left_click", "Left Click", &[])
+            .expect("OpenXR create_action() failed");
+        let xr_right_click = xr_action_set
+            .create_action::<bool>("right_click", "Right Click", &[])
+            .expect("OpenXR create_action() failed");
 
-        let xr_left_scroll_x = xr_action_set.create_action::<f32>("left_scroll_x", "Left Scroll X", &[]).expect("OpenXR create_action() failed");
-        let xr_left_scroll_y = xr_action_set.create_action::<f32>("left_scroll_y", "Left Scroll Y", &[]).expect("OpenXR create_action() failed");
-        let xr_right_scroll_x = xr_action_set.create_action::<f32>("right_scroll_x", "Right Scroll X", &[]).expect("OpenXR create_action() failed");
-        let xr_right_scroll_y = xr_action_set.create_action::<f32>("right_scroll_y", "Right Scroll Y", &[]).expect("OpenXR create_action() failed");
+        let xr_left_scroll_x = xr_action_set
+            .create_action::<f32>("left_scroll_x", "Left Scroll X", &[])
+            .expect("OpenXR create_action() failed");
+        let xr_left_scroll_y = xr_action_set
+            .create_action::<f32>("left_scroll_y", "Left Scroll Y", &[])
+            .expect("OpenXR create_action() failed");
+        let xr_right_scroll_x = xr_action_set
+            .create_action::<f32>("right_scroll_x", "Right Scroll X", &[])
+            .expect("OpenXR create_action() failed");
+        let xr_right_scroll_y = xr_action_set
+            .create_action::<f32>("right_scroll_y", "Right Scroll Y", &[])
+            .expect("OpenXR create_action() failed");
 
-        let xr_left_haptic = xr_action_set.create_action::<openxr::Haptic>("left_haptic", "Left Haptic", &[]).expect("OpenXR create_action() failed");
-        let xr_right_haptic = xr_action_set.create_action::<openxr::Haptic>("right_haptic", "Right Haptic", &[]).expect("OpenXR create_action() failed");
+        let xr_left_haptic = xr_action_set
+            .create_action::<openxr::Haptic>("left_haptic", "Left Haptic", &[])
+            .expect("OpenXR create_action() failed");
+        let xr_right_haptic = xr_action_set
+            .create_action::<openxr::Haptic>("right_haptic", "Right Haptic", &[])
+            .expect("OpenXR create_action() failed");
 
         // Register known interaction profiles.
 
@@ -481,7 +648,8 @@ impl XROutput {
 
         let mut xr_ok = false;
 
-        for (interaction_profile, aim, click, scroll_opt, haptic) in [ // TODO: use const structs here
+        for (interaction_profile, aim, click, scroll_opt, haptic) in [
+            // TODO: use const structs here
             // Generic
             (
                 "/khr/simple_controller",
@@ -490,7 +658,6 @@ impl XROutput {
                 None,
                 "/output/haptic",
             ),
-
             // Oculus_Quest2
             // Sony_PlayStationVR2: SteamVR PSVR2: It doesn't have dedicated interaction profile, but it can emulate oculus/touch_controller.
             (
@@ -500,7 +667,6 @@ impl XROutput {
                 Some(("/input/thumbstick/x", "/input/thumbstick/y")),
                 "/output/haptic",
             ),
-
             // Valve_SteamFrame
             (
                 "/valve/frame_controller_valve",
@@ -513,27 +679,39 @@ impl XROutput {
             let mut interaction_bindings = vec![
                 openxr::Binding::new(
                     &xr_left_action,
-                    xr_inst.string_to_path(&format!("{}{}", xr_left_hand, aim)).expect("OpenXR string_to_path() failed"),
+                    xr_inst
+                        .string_to_path(&format!("{}{}", xr_left_hand, aim))
+                        .expect("OpenXR string_to_path() failed"),
                 ),
                 openxr::Binding::new(
                     &xr_right_action,
-                    xr_inst.string_to_path(&format!("{}{}", xr_right_hand, aim)).expect("OpenXR string_to_path() failed"),
+                    xr_inst
+                        .string_to_path(&format!("{}{}", xr_right_hand, aim))
+                        .expect("OpenXR string_to_path() failed"),
                 ),
                 openxr::Binding::new(
                     &xr_left_click,
-                    xr_inst.string_to_path(&format!("{}{}", xr_left_hand, click)).expect("OpenXR string_to_path() failed"),
+                    xr_inst
+                        .string_to_path(&format!("{}{}", xr_left_hand, click))
+                        .expect("OpenXR string_to_path() failed"),
                 ),
                 openxr::Binding::new(
                     &xr_right_click,
-                    xr_inst.string_to_path(&format!("{}{}", xr_right_hand, click)).expect("OpenXR string_to_path() failed"),
+                    xr_inst
+                        .string_to_path(&format!("{}{}", xr_right_hand, click))
+                        .expect("OpenXR string_to_path() failed"),
                 ),
                 openxr::Binding::new(
                     &xr_left_haptic,
-                    xr_inst.string_to_path(&format!("{}{}", xr_left_hand, haptic)).expect("OpenXR string_to_path() failed"),
+                    xr_inst
+                        .string_to_path(&format!("{}{}", xr_left_hand, haptic))
+                        .expect("OpenXR string_to_path() failed"),
                 ),
                 openxr::Binding::new(
                     &xr_right_haptic,
-                    xr_inst.string_to_path(&format!("{}{}", xr_right_hand, haptic)).expect("OpenXR string_to_path() failed"),
+                    xr_inst
+                        .string_to_path(&format!("{}{}", xr_right_hand, haptic))
+                        .expect("OpenXR string_to_path() failed"),
                 ),
             ];
 
@@ -541,29 +719,41 @@ impl XROutput {
                 let mut scroll_interaction_bindings = vec![
                     openxr::Binding::new(
                         &xr_left_scroll_x,
-                        xr_inst.string_to_path(&format!("{}{}", xr_left_hand, scroll.0)).expect("OpenXR string_to_path() failed"),
+                        xr_inst
+                            .string_to_path(&format!("{}{}", xr_left_hand, scroll.0))
+                            .expect("OpenXR string_to_path() failed"),
                     ),
                     openxr::Binding::new(
                         &xr_left_scroll_y,
-                        xr_inst.string_to_path(&format!("{}{}", xr_left_hand, scroll.1)).expect("OpenXR string_to_path() failed"),
+                        xr_inst
+                            .string_to_path(&format!("{}{}", xr_left_hand, scroll.1))
+                            .expect("OpenXR string_to_path() failed"),
                     ),
                     openxr::Binding::new(
                         &xr_right_scroll_x,
-                        xr_inst.string_to_path(&format!("{}{}", xr_right_hand, scroll.0)).expect("OpenXR string_to_path() failed"),
+                        xr_inst
+                            .string_to_path(&format!("{}{}", xr_right_hand, scroll.0))
+                            .expect("OpenXR string_to_path() failed"),
                     ),
                     openxr::Binding::new(
                         &xr_right_scroll_y,
-                        xr_inst.string_to_path(&format!("{}{}", xr_right_hand, scroll.1)).expect("OpenXR string_to_path() failed"),
+                        xr_inst
+                            .string_to_path(&format!("{}{}", xr_right_hand, scroll.1))
+                            .expect("OpenXR string_to_path() failed"),
                     ),
                 ];
 
                 interaction_bindings.append(&mut scroll_interaction_bindings);
             }
 
-            xr_ok |= xr_inst.suggest_interaction_profile_bindings(
-                xr_inst.string_to_path(&format!("/interaction_profiles{}", interaction_profile)).expect("OpenXR string_to_path() failed"),
-                &interaction_bindings
-            ).is_ok();
+            xr_ok |= xr_inst
+                .suggest_interaction_profile_bindings(
+                    xr_inst
+                        .string_to_path(&format!("/interaction_profiles{}", interaction_profile))
+                        .expect("OpenXR string_to_path() failed"),
+                    &interaction_bindings,
+                )
+                .is_ok();
         }
 
         if !xr_ok {
@@ -580,10 +770,16 @@ impl XROutput {
             y: xr_right_scroll_y,
         };
 
-        xr_session.attach_action_sets(&[&xr_action_set]).expect("OpenXR attach_action_sets() failed");
+        xr_session
+            .attach_action_sets(&[&xr_action_set])
+            .expect("OpenXR attach_action_sets() failed");
 
-        let xr_left_space = xr_left_action.create_space(&xr_session, openxr::Path::NULL, openxr::Posef::IDENTITY).expect("OpenXR create_space() failed");
-        let xr_right_space = xr_right_action.create_space(&xr_session, openxr::Path::NULL, openxr::Posef::IDENTITY).expect("OpenXR create_space() failed");
+        let xr_left_space = xr_left_action
+            .create_space(&xr_session, openxr::Path::NULL, openxr::Posef::IDENTITY)
+            .expect("OpenXR create_space() failed");
+        let xr_right_space = xr_right_action
+            .create_space(&xr_session, openxr::Path::NULL, openxr::Posef::IDENTITY)
+            .expect("OpenXR create_space() failed");
 
         Self {
             device,
@@ -620,8 +816,19 @@ impl XROutput {
         }
     }
 
-    pub fn get_info(&self) -> OutputInfo { // TODO: prepare it it new and don't create new instance everytime?
-        OutputInfo::new(&self.device, &self.queue, self.color_format, DEPTH_FORMAT, self.sample_count, 2, "@builtin(view_index) view_index: u32,", "in.view_index", &self.diags)
+    pub fn get_info(&self) -> OutputInfo {
+        // TODO: prepare it it new and don't create new instance everytime?
+        OutputInfo::new(
+            &self.device,
+            &self.queue,
+            self.color_format,
+            DEPTH_FORMAT,
+            self.sample_count,
+            2,
+            "@builtin(view_index) view_index: u32,",
+            "in.view_index",
+            &self.diags,
+        )
     }
 
     pub fn poll(&self, main: &Main) -> bool {
@@ -638,25 +845,23 @@ impl XROutput {
         match new_state {
             State::Stopped => {
                 thread::sleep(Duration::from_secs_f32(NOTRUNNING_SLEEP));
-            },
-            State::Ready | State::Visible | State::Focused => {
-                match self.begin(inner) {
-                    Begin::NoRender => (),
-                    Begin::Frame((frame, pose_l_opt, pose_r_opt)) => {
-                        let scene_input = SceneInput {
-                            pose_l_opt: pose_l_opt.as_ref().map(|pose| pose as &dyn ScenePose),
-                            pose_r_opt: pose_r_opt.as_ref().map(|pose| pose as &dyn ScenePose),
-                        };
+            }
+            State::Ready | State::Visible | State::Focused => match self.begin(inner) {
+                Begin::NoRender => (),
+                Begin::Frame((frame, pose_l_opt, pose_r_opt)) => {
+                    let scene_input = SceneInput {
+                        pose_l_opt: pose_l_opt.as_ref().map(|pose| pose as &dyn ScenePose),
+                        pose_r_opt: pose_r_opt.as_ref().map(|pose| pose as &dyn ScenePose),
+                    };
 
-                        main.render(frame, &scene_input);
-                    },
+                    main.render(frame, &scene_input);
                 }
             },
             State::Exit => {
                 return false;
-            },
+            }
         }
-        
+
         if old_state != new_state {
             let audio_engine = main.get_audio_engine();
 
@@ -671,36 +876,40 @@ impl XROutput {
     }
 
     fn poll_impl(&self, inner: &mut Inner) {
-        while let Some(event) = self.xr_inst.poll_event(&mut inner.event_buf).expect("OpenXR poll_event() failed") {
+        while let Some(event) = self
+            .xr_inst
+            .poll_event(&mut inner.event_buf)
+            .expect("OpenXR poll_event() failed")
+        {
             match event {
-                openxr::Event::SessionStateChanged(event) => {
-                    match event.state() {
-                        openxr::SessionState::READY => {
-                            self.xr_session.begin(openxr::ViewConfigurationType::PRIMARY_STEREO).expect("OpenXR begin() failed");
-                            inner.state = State::Ready;
-                        },
-                        openxr::SessionState::STOPPING => {
-                            self.xr_session.end().expect("OpenXR end() failed");
-                            inner.state = State::Stopped;
-                        },
-                        openxr::SessionState::FOCUSED => {
-                            inner.state = State::Focused;
-                        },
-                        openxr::SessionState::VISIBLE => {
-                            inner.state = State::Visible;
-                        },
-                        openxr::SessionState::EXITING | openxr::SessionState::LOSS_PENDING => {
-                            inner.state = State::Exit;
-                        },
-                        _ => (),
+                openxr::Event::SessionStateChanged(event) => match event.state() {
+                    openxr::SessionState::READY => {
+                        self.xr_session
+                            .begin(openxr::ViewConfigurationType::PRIMARY_STEREO)
+                            .expect("OpenXR begin() failed");
+                        inner.state = State::Ready;
                     }
+                    openxr::SessionState::STOPPING => {
+                        self.xr_session.end().expect("OpenXR end() failed");
+                        inner.state = State::Stopped;
+                    }
+                    openxr::SessionState::FOCUSED => {
+                        inner.state = State::Focused;
+                    }
+                    openxr::SessionState::VISIBLE => {
+                        inner.state = State::Visible;
+                    }
+                    openxr::SessionState::EXITING | openxr::SessionState::LOSS_PENDING => {
+                        inner.state = State::Exit;
+                    }
+                    _ => (),
                 },
                 openxr::Event::ReferenceSpaceChangePending(_) => {
                     inner.origin_opt = None;
-                },
+                }
                 openxr::Event::InstanceLossPending(_) => {
                     inner.state = State::Exit;
-                },
+                }
                 _ => (),
             }
         }
@@ -714,21 +923,35 @@ impl XROutput {
 
         let display_t = frame_state.predicted_display_time;
 
-        if !frame_state.should_render { // See openxr::SessionState::SYNCHRONIZED.
-            xr_stream.end(display_t, openxr::EnvironmentBlendMode::OPAQUE, &[]).expect("OpenXR end() failed");
+        if !frame_state.should_render {
+            // See openxr::SessionState::SYNCHRONIZED.
+            xr_stream
+                .end(display_t, openxr::EnvironmentBlendMode::OPAQUE, &[])
+                .expect("OpenXR end() failed");
             return Begin::NoRender;
         }
 
         // Acquire next image from swapchain.
 
         let xr_swapchain = &mut inner.xr_swapchain;
-        let color_index = xr_swapchain.acquire_image().expect("OpenXR acquire_image() failed");
-        xr_swapchain.wait_image(openxr::Duration::INFINITE).expect("OpenXR wait_image() failed");
+        let color_index = xr_swapchain
+            .acquire_image()
+            .expect("OpenXR acquire_image() failed");
+        xr_swapchain
+            .wait_image(openxr::Duration::INFINITE)
+            .expect("OpenXR wait_image() failed");
         let color_view = self.color_views[color_index as usize].clone();
 
         // Calculate view matrices.
 
-        let (_, views) = self.xr_session.locate_views(openxr::ViewConfigurationType::PRIMARY_STEREO, display_t, &self.xr_space).expect("OpenXR locate_views() failed");
+        let (_, views) = self
+            .xr_session
+            .locate_views(
+                openxr::ViewConfigurationType::PRIMARY_STEREO,
+                display_t,
+                &self.xr_space,
+            )
+            .expect("OpenXR locate_views() failed");
         assert!(views.len() == 2);
 
         let mut view_calc_m = [Matrix4::zero(), Matrix4::zero()];
@@ -779,7 +1002,8 @@ impl XROutput {
         let mut view_m = [Matrix4::zero().into(), Matrix4::zero().into()];
 
         let origin = inner.origin_opt.as_ref().unwrap();
-        let origin_calc_m = MY_TO_OPENXR_M * Matrix4::from_translation(origin.pos) * Matrix4::from(origin.rot);
+        let origin_calc_m =
+            MY_TO_OPENXR_M * Matrix4::from_translation(origin.pos) * Matrix4::from(origin.rot);
 
         for (view_calc_m_single, view_m_single) in view_calc_m.iter().zip(view_m.iter_mut()) {
             *view_m_single = (view_calc_m_single * origin_calc_m).into();
@@ -787,7 +1011,9 @@ impl XROutput {
 
         // Handle input.
 
-        self.xr_session.sync_actions(&[(&self.xr_action_set).into()]).expect("OpenXR sync_actions() failed");
+        self.xr_session
+            .sync_actions(&[(&self.xr_action_set).into()])
+            .expect("OpenXR sync_actions() failed");
 
         let focused = matches!(inner.state, State::Focused);
         let mut ts_diff = 0.0;
@@ -804,25 +1030,68 @@ impl XROutput {
             inner.prev_ts_opt = Some(ts);
         }
 
-        let left_location = self.xr_left_space.locate(&self.xr_space, display_t).expect("OpenXR locate() failed");
-        let right_location = self.xr_right_space.locate(&self.xr_space, display_t).expect("OpenXR locate() failed");
+        let left_location = self
+            .xr_left_space
+            .locate(&self.xr_space, display_t)
+            .expect("OpenXR locate() failed");
+        let right_location = self
+            .xr_right_space
+            .locate(&self.xr_space, display_t)
+            .expect("OpenXR locate() failed");
 
-        let click_l = self.xr_left_click.state(&self.xr_session, openxr::Path::NULL).expect("OpenXR state() failed").current_state;
-        let click_r = self.xr_right_click.state(&self.xr_session, openxr::Path::NULL).expect("OpenXR state() failed").current_state;
+        let click_l = self
+            .xr_left_click
+            .state(&self.xr_session, openxr::Path::NULL)
+            .expect("OpenXR state() failed")
+            .current_state;
+        let click_r = self
+            .xr_right_click
+            .state(&self.xr_session, openxr::Path::NULL)
+            .expect("OpenXR state() failed")
+            .current_state;
 
         let scroll_l = self.calc_scroll(&self.xr_left_scroll, ts_diff);
         let scroll_r = self.calc_scroll(&self.xr_right_scroll, ts_diff);
 
-        let pose_l_opt = self.calc_pose(focused, origin, &left_location, click_l, scroll_l, &self.xr_left_haptic);
-        let pose_r_opt = self.calc_pose(focused, origin, &right_location, click_r, scroll_r, &self.xr_right_haptic);
-        
-        let frame = XRFrame::new(xr_swapchain, xr_stream, &self.xr_space, self.width, self.height, display_t, views, color_view, self.multisample_view.clone(), self.depth_view.clone(), view_m, cam_pos);
+        let pose_l_opt = self.calc_pose(
+            focused,
+            origin,
+            &left_location,
+            click_l,
+            scroll_l,
+            &self.xr_left_haptic,
+        );
+        let pose_r_opt = self.calc_pose(
+            focused,
+            origin,
+            &right_location,
+            click_r,
+            scroll_r,
+            &self.xr_right_haptic,
+        );
+
+        let frame = XRFrame::new(
+            xr_swapchain,
+            xr_stream,
+            &self.xr_space,
+            self.width,
+            self.height,
+            display_t,
+            views,
+            color_view,
+            self.multisample_view.clone(),
+            self.depth_view.clone(),
+            view_m,
+            cam_pos,
+        );
         Begin::Frame((frame, pose_l_opt, pose_r_opt))
     }
 
     fn calc_scroll(&self, scroll: &XRScroll, ts_diff: f32) -> ScenePoseScroll {
         let calc = |action: &openxr::Action<f32>| {
-            let state = action.state(&self.xr_session, openxr::Path::NULL).expect("OpenXR state() failed");
+            let state = action
+                .state(&self.xr_session, openxr::Path::NULL)
+                .expect("OpenXR state() failed");
 
             if state.is_active {
                 SCROLL_SPEED * ts_diff * state.current_state
@@ -831,14 +1100,24 @@ impl XROutput {
             }
         };
 
-        (
-            -calc(&scroll.x),
-            calc(&scroll.y),
-        )
+        (-calc(&scroll.x), calc(&scroll.y))
     }
 
-    fn calc_pose(&self, focused: bool, origin: &Origin, location: &openxr::SpaceLocation, click: bool, scroll: ScenePoseScroll, haptic: &openxr::Action<openxr::Haptic>) -> Option<XRPose> {
-        if focused && location.location_flags.contains(openxr::SpaceLocationFlags::POSITION_VALID | openxr::SpaceLocationFlags::ORIENTATION_VALID) {
+    fn calc_pose(
+        &self,
+        focused: bool,
+        origin: &Origin,
+        location: &openxr::SpaceLocation,
+        click: bool,
+        scroll: ScenePoseScroll,
+        haptic: &openxr::Action<openxr::Haptic>,
+    ) -> Option<XRPose> {
+        if focused
+            && location.location_flags.contains(
+                openxr::SpaceLocationFlags::POSITION_VALID
+                    | openxr::SpaceLocationFlags::ORIENTATION_VALID,
+            )
+        {
             let offset = Quaternion::from_angle_x(Deg(-45.0));
 
             let xr_pos = location.pose.position;
@@ -850,9 +1129,17 @@ impl XROutput {
             let origin_rot_inv = origin.rot.conjugate();
 
             let pos = origin_rot_inv * (Vector3::new(xr_pos.x, -xr_pos.z, xr_pos.y) - origin.pos); // inverse(origin.rot) * inverse(origin.pos) * xr_pos
-            let rot = origin_rot_inv * Quaternion::new(xr_rot.w, xr_rot.x, -xr_rot.z, xr_rot.y) * offset;
+            let rot =
+                origin_rot_inv * Quaternion::new(xr_rot.w, xr_rot.x, -xr_rot.z, xr_rot.y) * offset;
 
-            Some(XRPose::new(&pos, &rot, click, scroll, self.xr_session.clone(), haptic.clone()))
+            Some(XRPose::new(
+                &pos,
+                &rot,
+                click,
+                scroll,
+                self.xr_session.clone(),
+                haptic.clone(),
+            ))
         } else {
             None
         }
@@ -895,14 +1182,14 @@ impl Drop for DropGuard {
         if let Some(vk_dev) = &self.vk_dev {
             // From https://docs.rs/ash/latest/ash/struct.Instance.html#method.create_device :
             // The application must not destroy the parent Instance object before first destroying the returned Device child object. Device does not implement drop semantics and can only be destroyed via destroy_device().
-            
+
             unsafe { vk_dev.destroy_device(None) };
         }
 
         if let Some(vk_inst) = &self.vk_inst {
             // From https://docs.rs/ash/latest/ash/struct.Entry.html#method.create_instance :
             // Instance does not implement drop semantics and can only be destroyed via destroy_instance().
-            
+
             unsafe { vk_inst.destroy_instance(None) };
         }
 
@@ -928,7 +1215,20 @@ struct XRFrame<'a> {
 
 impl<'a> XRFrame<'a> {
     #[allow(clippy::too_many_arguments)]
-    fn new(xr_swapchain: &'a mut openxr::Swapchain<openxr::Vulkan>, xr_stream: &'a mut openxr::FrameStream<openxr::Vulkan>, xr_space: &'a openxr::Space, width: u32, height: u32, display_t: openxr::Time, views: Vec<openxr::View>, color_view: TextureView, multisample_view: Option<TextureView>, depth_view: TextureView, view_m: OutputViewMat, cam_pos: Vector3<f32>) -> Self {
+    fn new(
+        xr_swapchain: &'a mut openxr::Swapchain<openxr::Vulkan>,
+        xr_stream: &'a mut openxr::FrameStream<openxr::Vulkan>,
+        xr_space: &'a openxr::Space,
+        width: u32,
+        height: u32,
+        display_t: openxr::Time,
+        views: Vec<openxr::View>,
+        color_view: TextureView,
+        multisample_view: Option<TextureView>,
+        depth_view: TextureView,
+        view_m: OutputViewMat,
+        cam_pos: Vector3<f32>,
+    ) -> Self {
         Self {
             xr_swapchain,
             xr_stream,
@@ -970,35 +1270,37 @@ impl<'a> Frame for XRFrame<'a> {
     }
 
     fn end(self) {
-        self.xr_swapchain.release_image().expect("OpenXR release_image() failed");
+        self.xr_swapchain
+            .release_image()
+            .expect("OpenXR release_image() failed");
 
-        let rect = openxr::Rect2Di { // TODO: Precreate this object?
-            offset: openxr::Offset2Di {
-                x: 0,
-                y: 0,
-            },
+        let rect = openxr::Rect2Di {
+            // TODO: Precreate this object?
+            offset: openxr::Offset2Di { x: 0, y: 0 },
             extent: openxr::Extent2Di {
                 width: self.width.try_into().unwrap(),
                 height: self.height.try_into().unwrap(),
-            }
+            },
         };
 
         let views = [
             openxr::CompositionLayerProjectionView::new()
                 .pose(self.views[0].pose)
                 .fov(self.views[0].fov)
-                .sub_image(openxr::SwapchainSubImage::new()
-                    .swapchain(self.xr_swapchain)
-                    .image_array_index(0)
-                    .image_rect(rect)
+                .sub_image(
+                    openxr::SwapchainSubImage::new()
+                        .swapchain(self.xr_swapchain)
+                        .image_array_index(0)
+                        .image_rect(rect),
                 ),
             openxr::CompositionLayerProjectionView::new()
                 .pose(self.views[1].pose)
                 .fov(self.views[1].fov)
-                .sub_image(openxr::SwapchainSubImage::new()
-                    .swapchain(self.xr_swapchain)
-                    .image_array_index(1)
-                    .image_rect(rect)
+                .sub_image(
+                    openxr::SwapchainSubImage::new()
+                        .swapchain(self.xr_swapchain)
+                        .image_array_index(1)
+                        .image_rect(rect),
                 ),
         ];
 
@@ -1006,7 +1308,13 @@ impl<'a> Frame for XRFrame<'a> {
             .space(self.xr_space)
             .views(&views);
 
-        self.xr_stream.end(self.display_t, openxr::EnvironmentBlendMode::OPAQUE, &[&layer]).expect("OpenXR end() failed");
+        self.xr_stream
+            .end(
+                self.display_t,
+                openxr::EnvironmentBlendMode::OPAQUE,
+                &[&layer],
+            )
+            .expect("OpenXR end() failed");
     }
 }
 
@@ -1020,7 +1328,14 @@ struct XRPose {
 }
 
 impl XRPose {
-    fn new(pos: &Vector3<f32>, rot: &Quaternion<f32>, click: bool, scroll: ScenePoseScroll, xr_session: openxr::Session<openxr::Vulkan>, haptic: openxr::Action<openxr::Haptic>) -> Self {
+    fn new(
+        pos: &Vector3<f32>,
+        rot: &Quaternion<f32>,
+        click: bool,
+        scroll: ScenePoseScroll,
+        xr_session: openxr::Session<openxr::Vulkan>,
+        haptic: openxr::Action<openxr::Haptic>,
+    ) -> Self {
         Self {
             pos: *pos,
             rot: *rot,
@@ -1054,8 +1369,13 @@ impl ScenePose for XRPose {
     }
 
     fn apply_haptic(&self) {
-        let event = openxr::HapticVibration::new().duration(openxr::Duration::MIN_HAPTIC).frequency(openxr::FREQUENCY_UNSPECIFIED).amplitude(1.0);
-        self.haptic.apply_feedback(&self.xr_session, openxr::Path::NULL, &event).expect("OpenXR apply_feedback() failed");
+        let event = openxr::HapticVibration::new()
+            .duration(openxr::Duration::MIN_HAPTIC)
+            .frequency(openxr::FREQUENCY_UNSPECIFIED)
+            .amplitude(1.0);
+        self.haptic
+            .apply_feedback(&self.xr_session, openxr::Path::NULL, &event)
+            .expect("OpenXR apply_feedback() failed");
     }
 }
 
@@ -1072,9 +1392,21 @@ fn perspective(fov: &openxr::Fovf, near: f32, far: f32) -> Matrix4<f32> {
     let tan_height = tan_up - tan_down;
 
     Matrix4::new(
-        2.0 / tan_width, 0.0, 0.0, 0.0,
-        0.0, 2.0 / tan_height, 0.0, 0.0,
-        (tan_right + tan_left) / tan_width, (tan_up + tan_down) / tan_height, -far / (far - near), -1.0,
-        0.0, 0.0, -(far * near) / (far - near), 0.0
+        2.0 / tan_width,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.0 / tan_height,
+        0.0,
+        0.0,
+        (tan_right + tan_left) / tan_width,
+        (tan_up + tan_down) / tan_height,
+        -far / (far - near),
+        -1.0,
+        0.0,
+        0.0,
+        -(far * near) / (far - near),
+        0.0,
     )
 }

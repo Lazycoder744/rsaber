@@ -18,7 +18,7 @@ atomic = "0.6.1"
 bytemuck = {version = "1.23.1", features = ["aarch64_simd", "avx512_simd", "derive"]} # TODO: must_cast feature
 cfg-if = "1.0.1"
 cgmath = "0.18.0" # TODO: seems to be unmaintained, look for alternative
-cpal = {package = "rsaber_hackedcpal", version = "0.2.0", features = ["audio_thread_priority", "pipewire"]}
+cpal = {package = "rsaber_hackedcpal", version = "0.1.0", features = ["audio_thread_priority"]}
 image = "0.25.9"
 num_enum = "0.7.5"
 oneshot = {version = "0.2.1", default-features = false, features = ["std"]}

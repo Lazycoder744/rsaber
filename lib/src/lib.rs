@@ -1,4 +1,4 @@
-// TODO: run rustfmt
+// TODO: run rustfmt - Complete
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
 
@@ -53,7 +53,12 @@ const APP_VERSION_MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
 const APP_VERSION_MINOR: &str = env!("CARGO_PKG_VERSION_MINOR");
 const APP_VERSION_PATCH: &str = env!("CARGO_PKG_VERSION_PATCH");
 
-static APP_VERSION: LazyLock<String> = LazyLock::new(|| format!("{}.{}.{}", APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_VERSION_PATCH));
+static APP_VERSION: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "{}.{}.{}",
+        APP_VERSION_MAJOR, APP_VERSION_MINOR, APP_VERSION_PATCH
+    )
+});
 
 pub struct Main {
     audio_engine: AudioEngineRc,
@@ -61,9 +66,18 @@ pub struct Main {
 }
 
 impl Main {
-    pub fn new<A: AssetManagerTrait + Send + Sync + 'static>(asset_mgr: A, output_info: OutputInfo, stats: Stats) -> Self {
+    pub fn new<A: AssetManagerTrait + Send + Sync + 'static>(
+        asset_mgr: A,
+        output_info: OutputInfo,
+        stats: Stats,
+    ) -> Self {
         let audio_engine = Rc::new(AudioEngine::new());
-        let render = Render::new(Arc::new(asset_mgr), Rc::new(output_info), Arc::new(stats), Rc::clone(&audio_engine));
+        let render = Render::new(
+            Arc::new(asset_mgr),
+            Rc::new(output_info),
+            Arc::new(stats),
+            Rc::clone(&audio_engine),
+        );
 
         Self {
             audio_engine,

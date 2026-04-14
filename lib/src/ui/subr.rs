@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use crate::model::{Pointer, Saber, SaberVisibility, Window};
 use crate::scene::{SceneInput, ScenePose};
-use crate::ui::UIEvent;
+use crate::ui::{UIEvent, UIPointerPos, UIPointerScroll};
 
 const ACTIVE: f32 = 0.15; // [m]
 
@@ -37,7 +37,7 @@ impl UISubr {
                 prev_click_r: None,
                 active_saber: ActiveSaber::Right, // Right saber is active by default.
                 active_info_opt: None,
-            })
+            }),
         }
     }
 
@@ -51,7 +51,14 @@ impl UISubr {
         inner.active_info_opt = None;
     }
 
-    pub fn update(&self, saber_l: &Saber, saber_r: &Saber, pointer: &Pointer, windows: &[&Rc<Window>], scene_input: &SceneInput) {
+    pub fn update(
+        &self,
+        saber_l: &Saber,
+        saber_r: &Saber,
+        pointer: &Pointer,
+        windows: &[&Rc<Window>],
+        scene_input: &SceneInput,
+    ) {
         let mut inner = self.inner.borrow_mut();
 
         let pose_l_opt = &scene_input.pose_l_opt;
@@ -99,7 +106,7 @@ impl UISubr {
             if pose.get_render() {
                 pointer_visible = true;
             }
-            
+
             let mut pointer_scale = ACTIVE;
             let mut have_window = false;
 
@@ -107,13 +114,17 @@ impl UISubr {
             // - Should be visible.
             // - Intersection returns with the smallest distance.
 
-            if let Some((window, d, x, y)) = windows.iter()
+            if let Some((window, d, x, y)) = windows
+                .iter()
                 .filter_map(|window| window.intersect(pose).map(|(d, x, y)| (window, d, x, y)))
-                .min_by(|(_, _, _, d1), (_, _, _, d2)| d1.total_cmp(d2)) {
+                .min_by(|(_, _, _, d1), (_, _, _, d2)| d1.total_cmp(d2))
+            {
                 // If the active window is changed, then send UIEvent::PointerExit to
                 // the previous window.
 
-                if let Some(active_info) = &inner.active_info_opt && !Rc::ptr_eq(&active_info.window, window) {
+                if let Some(active_info) = &inner.active_info_opt
+                    && !Rc::ptr_eq(&active_info.window, window)
+                {
                     active_info.window.handle_event(UIEvent::PointerExit);
                 }
 
@@ -127,9 +138,15 @@ impl UISubr {
                 let scroll = pose.get_scroll();
 
                 let event_opt = if click {
-                    Some(UIEvent::PointerPress(x, y))
-                } else if scroll != (0.0, 0.0) { // TODO: provide method to determine zero?
-                    Some(UIEvent::PointerScroll(x, y, scroll.0, scroll.1))
+                    Some(UIEvent::PointerPress(UIPointerPos { x, y }))
+                } else if scroll != (0.0, 0.0) {
+                    // TODO: provide method to determine zero?
+                    Some(UIEvent::PointerScroll(UIPointerScroll {
+                        x,
+                        y,
+                        scroll_x: scroll.0,
+                        scroll_y: scroll.1,
+                    }))
                 } else {
                     active_info.last_move = Some((x, y));
 
@@ -137,10 +154,14 @@ impl UISubr {
                     // - This is to reduce the number of events sent to the UI thread.
                     // - Mostly relevant if the pose is controlled by mouse.
 
-                    if let Some(active_info) = &inner.active_info_opt && Rc::ptr_eq(&active_info.window, window) && let Some(last_move) = &active_info.last_move && *last_move == (x, y) {
+                    if let Some(active_info) = &inner.active_info_opt
+                        && Rc::ptr_eq(&active_info.window, window)
+                        && let Some(last_move) = &active_info.last_move
+                        && *last_move == (x, y)
+                    {
                         None
                     } else {
-                        Some(UIEvent::PointerMove(x, y))
+                        Some(UIEvent::PointerMove(UIPointerPos { x, y }))
                     }
                 };
 
@@ -149,7 +170,7 @@ impl UISubr {
                 if let Some(event) = event_opt {
                     window.handle_event(event);
                 }
-                
+
                 pointer_scale = d;
                 have_window = true;
             }
@@ -169,7 +190,9 @@ impl UISubr {
     }
 
     fn update_saber(saber: &Saber, pose_opt: &Option<&dyn ScenePose>) {
-        if let Some(pose) = pose_opt && pose.get_render() {
+        if let Some(pose) = pose_opt
+            && pose.get_render()
+        {
             saber.set_visible(SaberVisibility::Handle);
             saber.set_pos(pose.get_pos());
             saber.set_rot(pose.get_rot());

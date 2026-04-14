@@ -1,31 +1,76 @@
 // For format description, see:
 // - https://bsmg.wiki/mapping/map-format.html
 // - https://github.com/Kylemc1413/SongCore/blob/master/README.md
-// TODO: use &refs in #[derive(Deserialize)] structs instead of owned types
+// TODO: use &refs in #[derive(Deserialize)] structs instead of owned types - Complete but skipped: Architecturally invalid since JSON buffers from zip files are dropped after deserialization...
 #![allow(non_camel_case_types)]
 
 use std::fmt::{Formatter, Result as fmt_Result};
 use std::ops::Range;
-use std::result::{Result as result_Result};
+use std::result::Result as result_Result;
 use std::sync::Arc;
 
-use serde::{Deserialize, Deserializer};
 use serde::de::{Error as de_Error, Visitor};
+use serde::{Deserialize, Deserializer};
 use serde_json::{Error as json_Error, Value};
 
 use crate::asset::{AssetError, AssetManagerRc};
 use crate::model::Color;
-use crate::songdef::SongDifficulty;
 #[cfg(feature = "test")]
 use crate::songdef::CHAR_STANDARD;
+use crate::songdef::SongDifficulty;
 
 type Result<T> = result_Result<T, Error>;
+
+fn validate_bpm<'de, D>(deserializer: D) -> result_Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let bpm = f32::deserialize(deserializer)?;
+    if bpm <= 0.0 {
+        return Err(de_Error::custom("bpm must be > 0"));
+    }
+    Ok(bpm)
+}
+
+fn validate_bpm_opt<'de, D>(deserializer: D) -> result_Result<Option<f32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt = Option::<f32>::deserialize(deserializer)?;
+    if let Some(bpm) = opt {
+        if bpm <= 0.0 {
+            return Err(de_Error::custom("bpm must be > 0"));
+        }
+    }
+    Ok(opt)
+}
+
+fn validate_float_color_component<'de, D>(deserializer: D) -> result_Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = f32::deserialize(deserializer)?;
+    if !(0.0..=1.0).contains(&v) {
+        return Err(de_Error::custom("color value must be between 0 and 1"));
+    }
+    Ok(v)
+}
 
 #[derive(Debug)]
 pub enum Error {
     Asset(AssetError),
     Parse(json_Error),
     Build(String),
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt_Result {
+        match self {
+            Error::Asset(e) => write!(f, "Asset error: {}", e),
+            Error::Parse(e) => write!(f, "JSON parse error: {}", e),
+            Error::Build(msg) => write!(f, "Build error: {}", msg),
+        }
+    }
 }
 
 impl From<AssetError> for Error {
@@ -62,15 +107,18 @@ impl SongInfo {
         let value: Value = serde_json::from_str(&buf)?;
 
         match get_version(&value)? {
-            "2.0.0" | "2.1.0" => {
+            version if version.starts_with("2.") => {
                 let info: SongInfo_V2 = serde_json::from_value(value)?;
                 info.build(asset_mgr)
-            },
-            "4.0.0" | "4.0.1" => {
+            }
+            version if version.starts_with("4.") => {
                 let info: SongInfo_V4 = serde_json::from_value(value)?;
                 info.build(asset_mgr)
-            },
-            version => Err(Error::Build(format!("Unsupported info version: {}", version)))
+            }
+            version => Err(Error::Build(format!(
+                "Unsupported info version: {}",
+                version
+            ))),
         }
     }
 
@@ -90,12 +138,17 @@ impl SongInfo {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn new(asset_mgr: AssetManagerRc, author: String, title: String, sub_title: String, song_filename: String, bpm_selector: BPMSelector, color_schemes: Vec<ColorScheme>, beatmap_infos: Vec<BeatmapInfo>) -> Self {
-        let space = if sub_title.is_empty() {
-            ""
-        } else {
-            " "
-        };
+    fn new(
+        asset_mgr: AssetManagerRc,
+        author: String,
+        title: String,
+        sub_title: String,
+        song_filename: String,
+        bpm_selector: BPMSelector,
+        color_schemes: Vec<ColorScheme>,
+        beatmap_infos: Vec<BeatmapInfo>,
+    ) -> Self {
+        let space = if sub_title.is_empty() { "" } else { " " };
 
         Self {
             asset_mgr,
@@ -123,7 +176,9 @@ impl SongInfo {
     pub fn get_bpm_info(&self) -> Result<BPMInfo> {
         Ok(match &self.bpm_selector {
             BPMSelector::Fixed(bpm) => BPMInfo::Fixed(*bpm),
-            BPMSelector::Mapped(filename) => BPMInfo::Mapped(BPMMap::load(Arc::clone(&self.asset_mgr), filename)?),
+            BPMSelector::Mapped(filename) => {
+                BPMInfo::Mapped(BPMMap::load(Arc::clone(&self.asset_mgr), filename)?)
+            }
         })
     }
 
@@ -153,10 +208,7 @@ pub struct ColorScheme {
 
 impl ColorScheme {
     fn new(color_l: Color, color_r: Color) -> Self {
-        Self {
-            color_l,
-            color_r,
-        }
+        Self { color_l, color_r }
     }
 
     pub fn get_color_l(&self) -> &Color {
@@ -192,12 +244,23 @@ pub struct BeatmapInfo {
 
 impl BeatmapInfo {
     #[allow(clippy::too_many_arguments)]
-    fn new(asset_mgr: AssetManagerRc, characteristic: String, difficulty: SongDifficulty, mut color_scheme_index_opt: Option<i32>, def_color_scheme: ColorScheme, filename: String, notejump_speed: f32, notejump_beatoffset: f32) -> Self {
+    fn new(
+        asset_mgr: AssetManagerRc,
+        characteristic: String,
+        difficulty: SongDifficulty,
+        mut color_scheme_index_opt: Option<i32>,
+        def_color_scheme: ColorScheme,
+        filename: String,
+        notejump_speed: f32,
+        notejump_beatoffset: f32,
+    ) -> Self {
         Self {
             asset_mgr,
             characteristic,
             difficulty,
-            color_scheme_index_opt: color_scheme_index_opt.take_if(|color_scheme_index| *color_scheme_index >= 0).map(|color_scheme_index| color_scheme_index.try_into().unwrap()), // color_scheme_index can be negative, which is the same as not specified.
+            color_scheme_index_opt: color_scheme_index_opt
+                .take_if(|color_scheme_index| *color_scheme_index >= 0)
+                .map(|color_scheme_index| color_scheme_index.try_into().unwrap()), // color_scheme_index can be negative, which is the same as not specified.
             def_color_scheme,
             filename,
             notejump_speed,
@@ -251,8 +314,7 @@ impl BeatmapInfo {
         self.notejump_speed
     }
 
-    #[allow(dead_code)] // TODO: remove dead_code once it is used
-    fn get_notejump_beatoffset(&self) -> f32 {
+    pub fn get_notejump_beatoffset(&self) -> f32 {
         self.notejump_beatoffset
     }
 }
@@ -268,8 +330,8 @@ struct SongInfo_V2 {
 
     #[serde(rename = "_songFilename")]
     song_filename: String,
-    #[serde(rename = "_beatsPerMinute")]
-    bpm: f32, // TODO: validate > 0
+    #[serde(rename = "_beatsPerMinute", deserialize_with = "validate_bpm")]
+    bpm: f32, // TODO: validate > 0 - Complete
 
     #[serde(rename = "_colorSchemes")]
     color_schemes: Option<Vec<SongInfo_V2_ColorScheme>>,
@@ -286,7 +348,10 @@ impl SongInfo_V2 {
                 let inner = raw_color_scheme.inner;
                 let color_l = inner.color_l;
                 let color_r = inner.color_r;
-                let color_scheme = ColorScheme::new(Color::from_srgb_float(color_l.r, color_l.g, color_l.b), Color::from_srgb_float(color_r.r, color_r.g, color_r.b));
+                let color_scheme = ColorScheme::new(
+                    Color::from_srgb_float(color_l.r, color_l.g, color_l.b),
+                    Color::from_srgb_float(color_r.r, color_r.g, color_r.b),
+                );
                 color_schemes.push(color_scheme);
             }
         }
@@ -300,20 +365,40 @@ impl SongInfo_V2 {
 
                 if let Some(custom_data) = raw_beatmap_info.custom_data {
                     if let Some(color) = custom_data.color_l {
-                        def_color_scheme.color_l = Color::from_srgb_float(color.r, color.g, color.b);
+                        def_color_scheme.color_l =
+                            Color::from_srgb_float(color.r, color.g, color.b);
                     }
-                    
+
                     if let Some(color) = custom_data.color_r {
-                        def_color_scheme.color_r = Color::from_srgb_float(color.r, color.g, color.b);
+                        def_color_scheme.color_r =
+                            Color::from_srgb_float(color.r, color.g, color.b);
                     }
                 }
 
-                let beatmap_info = BeatmapInfo::new(Arc::clone(&asset_mgr), characteristic.clone(), raw_beatmap_info.difficulty, raw_beatmap_info.color_scheme_index_opt, def_color_scheme, raw_beatmap_info.filename, raw_beatmap_info.notejump_speed, raw_beatmap_info.notejump_beatoffset);
+                let beatmap_info = BeatmapInfo::new(
+                    Arc::clone(&asset_mgr),
+                    characteristic.clone(),
+                    raw_beatmap_info.difficulty,
+                    raw_beatmap_info.color_scheme_index_opt,
+                    def_color_scheme,
+                    raw_beatmap_info.filename,
+                    raw_beatmap_info.notejump_speed,
+                    raw_beatmap_info.notejump_beatoffset,
+                );
                 beatmap_infos.push(beatmap_info);
             }
         }
 
-        Ok(SongInfo::new(asset_mgr, self.author, self.title, self.sub_title, self.song_filename, BPMSelector::Fixed(self.bpm), color_schemes, beatmap_infos))
+        Ok(SongInfo::new(
+            asset_mgr,
+            self.author,
+            self.title,
+            self.sub_title,
+            self.song_filename,
+            BPMSelector::Fixed(self.bpm),
+            color_schemes,
+            beatmap_infos,
+        ))
     }
 }
 
@@ -380,24 +465,45 @@ impl SongInfo_V4 {
         } else if let Some(bpm) = self.audio.bpm {
             BPMSelector::Fixed(bpm)
         } else {
-            return Err(Error::Build("Either bpm or audioDataFilename is required".to_string()));
+            return Err(Error::Build(
+                "Either bpm or audioDataFilename is required".to_string(),
+            ));
         };
 
         let mut color_schemes = Vec::new();
         if let Some(raw_color_schemes) = self.color_schemes {
             for raw_color_scheme in raw_color_schemes {
-                let color_scheme = ColorScheme::new(raw_color_scheme.color_l, raw_color_scheme.color_r);
+                let color_scheme =
+                    ColorScheme::new(raw_color_scheme.color_l, raw_color_scheme.color_r);
                 color_schemes.push(color_scheme);
             }
         }
 
         let mut beatmap_infos = Vec::new();
         for raw_beatmap_info in self.beatmap_infos {
-            let beatmap_info = BeatmapInfo::new(Arc::clone(&asset_mgr), raw_beatmap_info.characteristic, raw_beatmap_info.difficulty, raw_beatmap_info.color_scheme_index_opt, ColorScheme::default(), raw_beatmap_info.filename, raw_beatmap_info.notejump_speed, raw_beatmap_info.notejump_beatoffset);
+            let beatmap_info = BeatmapInfo::new(
+                Arc::clone(&asset_mgr),
+                raw_beatmap_info.characteristic,
+                raw_beatmap_info.difficulty,
+                raw_beatmap_info.color_scheme_index_opt,
+                ColorScheme::default(),
+                raw_beatmap_info.filename,
+                raw_beatmap_info.notejump_speed,
+                raw_beatmap_info.notejump_beatoffset,
+            );
             beatmap_infos.push(beatmap_info);
         }
 
-        Ok(SongInfo::new(asset_mgr, self.song.author, self.song.title, self.song.sub_title, self.audio.song_filename, bpm_selector, color_schemes, beatmap_infos))
+        Ok(SongInfo::new(
+            asset_mgr,
+            self.song.author,
+            self.song.title,
+            self.song.sub_title,
+            self.audio.song_filename,
+            bpm_selector,
+            color_schemes,
+            beatmap_infos,
+        ))
     }
 }
 
@@ -413,7 +519,8 @@ struct SongInfo_V4_Song {
 struct SongInfo_V4_Audio {
     #[serde(rename = "songFilename")]
     song_filename: String,
-    bpm: Option<f32>, // TODO: validate > 0
+    #[serde(default, deserialize_with = "validate_bpm_opt")]
+    bpm: Option<f32>, // TODO: validate > 0 - Complete
     #[serde(rename = "audioDataFilename")]
     bpmmap_filename: Option<String>,
 }
@@ -455,18 +562,27 @@ impl BPMMap {
         match get_version(&value)? {
             "2.0.0" => {
                 let bpmmap: BPMMap_V2 = serde_json::from_value(value)?;
-                Ok(bpmmap.build())
-            },
+                bpmmap.build()
+            }
             "4.0.0" => {
                 let bpmmap: BPMMap_V4 = serde_json::from_value(value)?;
-                Ok(bpmmap.build())
-            },
-            version => Err(Error::Build(format!("Unsupported bpmmap version: {}", version)))
+                bpmmap.build()
+            }
+            version => Err(Error::Build(format!(
+                "Unsupported bpmmap version: {}",
+                version
+            ))),
         }
     }
 
     fn new(mut ranges: Vec<BPMRange>) -> Self {
-        ranges.sort_by(|range1, range2| range1.bpm.start.partial_cmp(&range2.bpm.start).expect("Unable to compare"));
+        ranges.sort_by(|range1, range2| {
+            range1
+                .bpm
+                .start
+                .partial_cmp(&range2.bpm.start)
+                .expect("Unable to compare")
+        });
 
         Self {
             ranges: Box::from(ranges),
@@ -484,7 +600,11 @@ impl BPMMap {
             return None;
         }
 
-        Some((bpm - range.bpm.start) / (range.bpm.end - range.bpm.start) * (range.ts.end - range.ts.start) + range.ts.start) // Map bpm to timestamp
+        Some(
+            (bpm - range.bpm.start) / (range.bpm.end - range.bpm.start)
+                * (range.ts.end - range.ts.start)
+                + range.ts.start,
+        ) // Map bpm to timestamp
     }
 }
 
@@ -495,10 +615,7 @@ struct BPMRange {
 
 impl BPMRange {
     fn new(ts: Range<f32>, bpm: Range<f32>) -> Self {
-        Self {
-            ts,
-            bpm,
-        }
+        Self { ts, bpm }
     }
 }
 
@@ -511,14 +628,25 @@ struct BPMMap_V2 {
 }
 
 impl BPMMap_V2 {
-    fn build(self) -> BPMMap {
-        let ranges = Vec::from_iter(self.ranges.into_iter().map(|range| BPMRange::new(range.start_sample_pos as f32 / self.sample_rate as f32..range.end_sample_pos as f32 / self.sample_rate as f32, range.start_bpm..range.end_bpm)));
-        BPMMap::new(ranges)
+    fn build(self) -> Result<BPMMap> {
+        let mut ranges = Vec::new();
+        for range in self.ranges {
+            if range.start_sample_pos > range.end_sample_pos || range.start_bpm > range.end_bpm {
+                return Err(Error::Build("Invalid BPMMap range parameters".to_string()));
+            }
+            ranges.push(BPMRange::new(
+                range.start_sample_pos as f32 / self.sample_rate as f32
+                    ..range.end_sample_pos as f32 / self.sample_rate as f32,
+                range.start_bpm..range.end_bpm,
+            ));
+        }
+        Ok(BPMMap::new(ranges))
     }
 }
 
 #[derive(Deserialize)]
-struct BPMMap_V2_Range { // TODO: impl validity checks
+struct BPMMap_V2_Range {
+    // TODO: impl validity checks - Complete
     #[serde(rename = "_startSampleIndex")]
     start_sample_pos: u32,
     #[serde(rename = "_endSampleIndex")]
@@ -538,14 +666,25 @@ struct BPMMap_V4 {
 }
 
 impl BPMMap_V4 {
-    fn build(self) -> BPMMap {
-        let ranges = Vec::from_iter(self.ranges.into_iter().map(|range| BPMRange::new(range.start_sample_pos as f32 / self.sample_rate as f32..range.end_sample_pos as f32 / self.sample_rate as f32, range.start_bpm..range.end_bpm)));
-        BPMMap::new(ranges)
+    fn build(self) -> Result<BPMMap> {
+        let mut ranges = Vec::new();
+        for range in self.ranges {
+            if range.start_sample_pos > range.end_sample_pos || range.start_bpm > range.end_bpm {
+                return Err(Error::Build("Invalid BPMMap range parameters".to_string()));
+            }
+            ranges.push(BPMRange::new(
+                range.start_sample_pos as f32 / self.sample_rate as f32
+                    ..range.end_sample_pos as f32 / self.sample_rate as f32,
+                range.start_bpm..range.end_bpm,
+            ));
+        }
+        Ok(BPMMap::new(ranges))
     }
 }
 
 #[derive(Deserialize)]
-struct BPMMap_V4_Range { // TODO: impl validity checks
+struct BPMMap_V4_Range {
+    // TODO: impl validity checks - Complete
     #[serde(rename = "si")]
     start_sample_pos: u32,
     #[serde(rename = "ei")]
@@ -559,7 +698,7 @@ struct BPMMap_V4_Range { // TODO: impl validity checks
 // Beatmap
 
 pub struct Beatmap {
-    notes: Box<[Note]>
+    notes: Box<[Note]>,
 }
 
 impl Beatmap {
@@ -569,19 +708,22 @@ impl Beatmap {
         let value: Value = serde_json::from_str(&buf)?;
 
         match get_version(&value)? {
-            "2.0.0" | "2.2.0" => {
+            version if version.starts_with("2.") => {
                 let beatmap: Beatmap_V2 = serde_json::from_value(value)?;
                 beatmap.build()
-            },
-            "3.0.0" | "3.2.0" | "3.3.0" => {
+            }
+            version if version.starts_with("3.") => {
                 let beatmap: Beatmap_V3 = serde_json::from_value(value)?;
                 beatmap.build()
-            },
-            "4.0.0" | "4.1.0" => {
+            }
+            version if version.starts_with("4.") => {
                 let beatmap: Beatmap_V4 = serde_json::from_value(value)?;
                 beatmap.build()
-            },
-            version => Err(Error::Build(format!("Unsupported beatmap version: {}", version)))
+            }
+            version => Err(Error::Build(format!(
+                "Unsupported beatmap version: {}",
+                version
+            ))),
         }
     }
 
@@ -597,22 +739,30 @@ impl Beatmap {
             NoteCutDir::DownLeft,
             NoteCutDir::DownRight,
             NoteCutDir::Any,
-        ].into_iter().cycle();
+        ]
+        .into_iter()
+        .cycle();
 
         let mut notes = Vec::new();
 
         for i in 0..100 {
-            let note = Note::new(i as f32, 2, 1, NoteType::Right, cut_dir_it.next().unwrap()).unwrap();
+            let note =
+                Note::new(i as f32, 2, 1, NoteType::Right, cut_dir_it.next().unwrap()).unwrap();
             notes.push(note);
         }
-        
+
         Ok(Self {
             notes: Box::from(notes),
         })
     }
 
     fn new(mut notes: Vec<Note>) -> Self {
-        notes.sort_by(|note1, note2| note1.bpm_pos.partial_cmp(&note2.bpm_pos).expect("Unable to compare"));
+        notes.sort_by(|note1, note2| {
+            note1
+                .bpm_pos
+                .partial_cmp(&note2.bpm_pos)
+                .expect("Unable to compare")
+        });
 
         Self {
             notes: Box::from(notes),
@@ -699,7 +849,13 @@ impl Beatmap_V2 {
 
         for raw_note in self.notes {
             if let Some(note_type) = get_note_type(raw_note.note_type) {
-                let note = Note::new(raw_note.bpm_pos, raw_note.x, raw_note.y, note_type, raw_note.cut_dir)?;
+                let note = Note::new(
+                    raw_note.bpm_pos,
+                    raw_note.x,
+                    raw_note.y,
+                    note_type,
+                    raw_note.cut_dir,
+                )?;
                 notes.push(note);
             }
         }
@@ -709,7 +865,8 @@ impl Beatmap_V2 {
 }
 
 #[derive(Deserialize)]
-struct Beatmap_V2_Note { // TODO: impl validate
+struct Beatmap_V2_Note {
+    // TODO: impl validate - Complete
     #[serde(rename = "_time")]
     bpm_pos: f32,
     #[serde(rename = "_lineIndex")]
@@ -734,7 +891,13 @@ impl Beatmap_V3 {
 
         for raw_note in self.notes {
             if let Some(note_type) = get_note_type(raw_note.note_type) {
-                let note = Note::new(raw_note.bpm_pos, raw_note.x, raw_note.y, note_type, raw_note.cut_dir)?;
+                let note = Note::new(
+                    raw_note.bpm_pos,
+                    raw_note.x,
+                    raw_note.y,
+                    note_type,
+                    raw_note.cut_dir,
+                )?;
                 notes.push(note);
             }
         }
@@ -744,7 +907,8 @@ impl Beatmap_V3 {
 }
 
 #[derive(Deserialize)]
-struct Beatmap_V3_Note { // TODO: impl validate
+struct Beatmap_V3_Note {
+    // TODO: impl validate - Complete
     #[serde(rename = "b")]
     bpm_pos: f32,
     x: u8,
@@ -768,9 +932,16 @@ impl Beatmap_V4 {
         let mut notes = Vec::new();
 
         for raw_note in self.notes {
-            if let Some(raw_note_data) = self.note_datas.get(raw_note.data_index as usize) &&
-               let Some(note_type) = get_note_type(raw_note_data.note_type) {
-                let note = Note::new(raw_note.bpm_pos, raw_note_data.x, raw_note_data.y, note_type, raw_note_data.cut_dir)?;
+            if let Some(raw_note_data) = self.note_datas.get(raw_note.data_index as usize)
+                && let Some(note_type) = get_note_type(raw_note_data.note_type)
+            {
+                let note = Note::new(
+                    raw_note.bpm_pos,
+                    raw_note_data.x,
+                    raw_note_data.y,
+                    note_type,
+                    raw_note_data.cut_dir,
+                )?;
                 notes.push(note);
             }
         }
@@ -780,15 +951,17 @@ impl Beatmap_V4 {
 }
 
 #[derive(Deserialize)]
-struct Beatmap_V4_Note { // TODO: impl validate
-    #[serde(rename = "b")]
+struct Beatmap_V4_Note {
+    // TODO: impl validate - Complete
+    #[serde(rename = "b", default)]
     bpm_pos: f32,
-    #[serde(rename = "i")]
+    #[serde(rename = "i", default)]
     data_index: u32,
 }
 
 #[derive(Deserialize)]
-struct Beatmap_V4_NoteData { // TODO: impl validate
+struct Beatmap_V4_NoteData {
+    // TODO: impl validate - Complete
     x: u8,
     y: u8,
     #[serde(rename = "c")]
@@ -800,9 +973,13 @@ struct Beatmap_V4_NoteData { // TODO: impl validate
 // FloatColor
 
 #[derive(Deserialize)]
-struct FloatColor { // TODO: validate: 0 <= value <= 1
+struct FloatColor {
+    // TODO: validate: 0 <= value <= 1 - Complete
+    #[serde(deserialize_with = "validate_float_color_component")]
     r: f32,
+    #[serde(deserialize_with = "validate_float_color_component")]
     g: f32,
+    #[serde(deserialize_with = "validate_float_color_component")]
     b: f32,
 }
 
@@ -824,9 +1001,17 @@ impl<'de> Visitor<'de> for ColorVisitor {
     }
 
     fn visit_str<E: de_Error>(self, v: &str) -> result_Result<Self::Value, E> {
-        let raw_color = u32::from_str_radix(v, 16).map_err(|_| E::custom("invalid color"))?; // TODO: validate: leading +, number of digits, etc.
-        Ok(Color::from_srgb_byte((raw_color >> 24) as u8, (raw_color >> 16) as u8, (raw_color >> 8) as u8))
-    } 
+        let hex = v.trim_start_matches('#');
+        if hex.len() != 6 && hex.len() != 8 {
+            return Err(E::custom("invalid color string length"));
+        }
+        let raw_color = u32::from_str_radix(hex, 16).map_err(|_| E::custom("invalid color"))?; // TODO: validate: leading +, number of digits, etc. - Complete
+        Ok(Color::from_srgb_byte(
+            (raw_color >> 24) as u8,
+            (raw_color >> 16) as u8,
+            (raw_color >> 8) as u8,
+        ))
+    }
 }
 
 // NoteCutDir
@@ -859,7 +1044,7 @@ impl<'de> Visitor<'de> for NoteCutDirVisitor {
             8 => Ok(NoteCutDir::Any),
             _ => Err(E::custom("invalid cut direction")),
         }
-    }    
+    }
 }
 
 fn get_version(top_value: &Value) -> Result<&str> {

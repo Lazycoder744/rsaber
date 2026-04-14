@@ -1,11 +1,14 @@
 use std::cell::RefCell;
 
 use cgmath::{InnerSpace, Matrix4, Quaternion, Vector3};
-use wgpu::{BufferUsages, Device};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
+use wgpu::{BufferUsages, Device};
 
 use crate::asset::AssetManagerRc;
-use crate::model::{Color, InstShaderImplType, InstShaderType, InstSimpleColorBuf, Mesh, Model, ModelFactory, ModelHandle, PrimitiveStateType, Submesh, VertexPos, VertexShaderType, SABER_DIR};
+use crate::model::{
+    Color, InstShaderImplType, InstShaderType, InstSimpleColorBuf, Mesh, Model, ModelFactory,
+    ModelHandle, PrimitiveStateType, SABER_DIR, Submesh, VertexPos, VertexShaderType,
+};
 use crate::ui::UIManagerRc;
 
 pub struct PointerParam {
@@ -14,10 +17,8 @@ pub struct PointerParam {
 
 impl PointerParam {
     pub fn new(color: &Color) -> Self {
-        Self {
-            color: *color,
-        }
-    }    
+        Self { color: *color }
+    }
 }
 
 impl ModelFactory for PointerParam {
@@ -33,16 +34,23 @@ impl ModelFactory for PointerParam {
         let dir = SABER_DIR.normalize();
 
         let vertexes = [
-            VertexPos { pos: [0.0, 0.0, 0.0] },
-            VertexPos { pos: [dir.x, dir.y, dir.z] },
+            VertexPos {
+                pos: [0.0, 0.0, 0.0],
+            },
+            VertexPos {
+                pos: [dir.x, dir.y, dir.z],
+            },
         ];
 
-        let indexes: [u16; 2] = [
+        let indexes: [u16; 2] = [0, 1];
+
+        let submesh = Submesh::new(
             0,
-            1,
-        ];
-
-        let submesh = Submesh::new(0, indexes.len() as u32, 0, PrimitiveStateType::LineList, InstShaderType::SimpleColor); // 0
+            indexes.len() as u32,
+            0,
+            PrimitiveStateType::LineList,
+            InstShaderType::SimpleColor,
+        ); // 0
 
         // Create buffers.
 
@@ -63,7 +71,13 @@ impl ModelFactory for PointerParam {
         Mesh::new(vertex_buf, index_buf, VertexShaderType::Pos, submeshes)
     }
 
-    fn create(self, handle: ModelHandle, _device: &Device, _inst_sh_impls: &mut [InstShaderImplType], _ui_manager: UIManagerRc) -> Self::Model {
+    fn create(
+        self,
+        handle: ModelHandle,
+        _device: &Device,
+        _inst_sh_impls: &mut [InstShaderImplType],
+        _ui_manager: UIManagerRc,
+    ) -> Self::Model {
         Pointer::new(self, handle)
     }
 }
@@ -71,7 +85,7 @@ impl ModelFactory for PointerParam {
 pub struct Pointer {
     param: PointerParam,
     handle: ModelHandle,
-    inner: RefCell<Inner>,    
+    inner: RefCell<Inner>,
 }
 
 struct Inner {
@@ -80,7 +94,8 @@ struct Inner {
     rot: Quaternion<f32>,
 }
 
-impl Pointer { // TODO: would be nice if we can integrate this one to saber model
+impl Pointer {
+    // TODO: would be nice if we can integrate this one to saber model
     fn new(param: PointerParam, handle: ModelHandle) -> Self {
         Self {
             param,
@@ -115,7 +130,9 @@ impl Model for Pointer {
         assert!(inst_index == 0);
 
         let inner = self.inner.borrow();
-        let model_m = Matrix4::from_translation(inner.pos) * Matrix4::from(inner.rot) * Matrix4::from_scale(inner.scale);
+        let model_m = Matrix4::from_translation(inner.pos)
+            * Matrix4::from(inner.rot)
+            * Matrix4::from_scale(inner.scale);
         InstSimpleColorBuf::fill(&self.param.color, &model_m)
     }
 }

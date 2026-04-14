@@ -1,5 +1,5 @@
-use slint::{Global, SharedString};
 use slint::platform::{Key, WindowEvent};
+use slint::{Global, SharedString};
 
 use crate::ui::WindowBaseConfig;
 
@@ -10,19 +10,28 @@ use crate::ui::WindowBaseConfig;
 //   UI framework, and it is much easier to locate code which
 //   needs a change.
 
-pub use slint::{ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel, Weak};
+pub use slint::{
+    ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel, Weak,
+};
 
 pub trait WindowUtil {
     // This trait contains useful functions to avoid bringing in too much slint
     // internals into consumers.
 
-    fn set_input_enabled<'a>(&'a self, enabled: bool) where WindowBaseConfig<'a>: Global<'a, Self>, Self: Sized;
+    fn set_input_enabled<'a>(&'a self, enabled: bool)
+    where
+        WindowBaseConfig<'a>: Global<'a, Self>,
+        Self: Sized;
     fn handle_key<S: AsRef<str>>(&self, key: S);
     fn handle_key_end(&self);
 }
 
 impl<C: ComponentHandle> WindowUtil for C {
-    fn set_input_enabled<'a>(&'a self, enabled: bool) where WindowBaseConfig<'a>: Global<'a, Self>, Self: Sized {
+    fn set_input_enabled<'a>(&'a self, enabled: bool)
+    where
+        WindowBaseConfig<'a>: Global<'a, Self>,
+        Self: Sized,
+    {
         let config = self.global::<WindowBaseConfig>();
         config.set_input_enabled(enabled);
     }

@@ -12,7 +12,12 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    pub fn new(vertex_buf: Buffer, index_buf: Buffer, vertex_sh_type: VertexShaderType, submeshes: Box<[Submesh]>) -> Self {
+    pub fn new(
+        vertex_buf: Buffer,
+        index_buf: Buffer,
+        vertex_sh_type: VertexShaderType,
+        submeshes: Box<[Submesh]>,
+    ) -> Self {
         assert!(!submeshes.is_empty());
 
         Self {
@@ -49,7 +54,13 @@ pub struct Submesh {
 }
 
 impl Submesh {
-    pub fn new(index_start: u32, index_end: u32, base_vertex: i32, primitive_state_type: PrimitiveStateType, inst_sh_type: InstShaderType) -> Self {
+    pub fn new(
+        index_start: u32,
+        index_end: u32,
+        base_vertex: i32,
+        primitive_state_type: PrimitiveStateType,
+        inst_sh_type: InstShaderType,
+    ) -> Self {
         assert!(index_start < index_end);
 
         Self {

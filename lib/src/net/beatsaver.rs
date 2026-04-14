@@ -8,20 +8,24 @@ use url::Url;
 use crate::net::Request;
 use crate::songdef::SongDifficulty;
 
-static API: LazyLock<Url> = LazyLock::new(|| Url::parse("https://beatsaver.com/api/").expect("Invalid url"));
+static API: LazyLock<Url> =
+    LazyLock::new(|| Url::parse("https://beatsaver.com/api/").expect("Invalid url"));
 
 pub struct BeatSaverSearchRequest {
     query: String,
     order: String,
     ascending: bool,
+    page: u32,
 }
 
 impl BeatSaverSearchRequest {
-    pub fn new<S: AsRef<str>>(query: S, order: S, ascending: bool) -> Self { // TODO: separate type parameters for query, order.
+    pub fn new<S: AsRef<str>>(query: S, order: S, ascending: bool, page: u32) -> Self {
+        // TODO: separate type parameters for query, order.
         Self {
             query: query.as_ref().to_string(),
             order: order.as_ref().to_string(),
             ascending,
+            page,
         }
     }
 }
@@ -31,14 +35,17 @@ impl Request for BeatSaverSearchRequest {
     type Error = reqwest_Error;
 
     async fn exec(self, client: Client) -> Result<Self::Response, Self::Error> {
-        let url = API.join("search/text/0").expect("Invalid url");
+        let url = API
+            .join(&format!("search/text/{}", self.page))
+            .expect("Invalid url");
 
-        client.get(url)
+        client
+            .get(url)
             .query(&[
                 ("q", self.query.as_str()),
                 ("order", self.order.as_str()),
                 ("ascending", if self.ascending { "true" } else { "false" }),
-                ("pageSize", "100"), // TODO: at the moment it is hardcoded, implement paging on UI?
+                ("pageSize", "10"),
             ])
             .send()
             .await?
@@ -86,7 +93,9 @@ impl BeatSaverSong {
     }
 
     pub fn get_published_version(&self) -> Option<&BeatSaverSongVersion> {
-        self.versions.iter().find(|version| version.get_state() == "Published")
+        self.versions
+            .iter()
+            .find(|version| version.get_state() == "Published")
     }
 }
 
@@ -103,7 +112,7 @@ impl BeatSaverSongUploader {
 
 #[derive(Deserialize)]
 pub struct BeatSaverSongMetadata {
-    bpm: f32, // TODO: validate > 0
+    bpm: f32,      // TODO: validate > 0
     duration: i32, // TODO: validate > 0
 }
 
@@ -167,6 +176,10 @@ impl BeatSaverSongVersion {
 pub struct BeatSaverSongVariant {
     characteristic: String,
     difficulty: SongDifficulty,
+    #[serde(default)]
+    njs: f32,
+    #[serde(default)]
+    offset: f32,
 }
 
 impl BeatSaverSongVariant {
@@ -176,5 +189,13 @@ impl BeatSaverSongVariant {
 
     pub fn get_difficulty(&self) -> SongDifficulty {
         self.difficulty
+    }
+
+    pub fn get_njs(&self) -> f32 {
+        self.njs
+    }
+
+    pub fn get_offset(&self) -> f32 {
+        self.offset
     }
 }

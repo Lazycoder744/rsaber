@@ -7,7 +7,9 @@ use url::Url;
 use zip::ZipArchive;
 use zip::result::ZipError;
 
-use crate::asset::{AssetError, AssetFileBox, AssetFileTrait, AssetManagerRc, AssetManagerTrait, AssetResult};
+use crate::asset::{
+    AssetError, AssetFileBox, AssetFileTrait, AssetManagerRc, AssetManagerTrait, Result as AssetResult,
+};
 use crate::net::Request;
 
 pub struct SongZipRequest {
@@ -16,9 +18,7 @@ pub struct SongZipRequest {
 
 impl SongZipRequest {
     pub fn new(url: Url) -> Self {
-        Self {
-            url,
-        }
+        Self { url }
     }
 }
 
@@ -27,7 +27,8 @@ impl Request for SongZipRequest {
     type Error = SongZipError;
 
     async fn exec(self, client: Client) -> Result<Self::Response, Self::Error> {
-        let buf = client.get(self.url)
+        let buf = client
+            .get(self.url)
             .send()
             .await?
             .error_for_status()?
@@ -64,15 +65,17 @@ struct AssetManager {
 
 impl AssetManager {
     fn new(content: Content) -> Self {
-        Self {
-            content,
-        }
+        Self { content }
     }
 }
 
 impl AssetManagerTrait for AssetManager {
     fn open(&self, name: &str) -> AssetResult<AssetFileBox> {
-        let buf = Arc::clone(self.content.get(&name.to_lowercase()).ok_or(AssetError::NotFound)?);
+        let buf = Arc::clone(
+            self.content
+                .get(&name.to_lowercase())
+                .ok_or(AssetError::NotFound)?,
+        );
         Ok(Box::new(AssetFile::new(buf)))
     }
 }
@@ -83,19 +86,19 @@ struct AssetFile {
 
 impl AssetFile {
     fn new(buf: BufRc) -> Self {
-        Self {
-            buf,
-        }
+        Self { buf }
     }
 }
 
 impl AssetFileTrait for AssetFile {
-    fn read(&self) -> AssetResult<Box<dyn Read + Send + Sync>> {
+    fn read(self: Box<Self>) -> AssetResult<Box<dyn Read + Send + Sync>> {
         Ok(Box::new(Cursor::new(Arc::clone(&self.buf))))
     }
 
-    fn read_str(&self) -> AssetResult<String> {
-        Ok(String::from(str::from_utf8(&self.buf).map_err(|_| AssetError::Decode)?))
+    fn read_str(self: Box<Self>) -> AssetResult<String> {
+        Ok(String::from(
+            str::from_utf8(&self.buf).map_err(|_| AssetError::Decode)?,
+        ))
     }
 }
 
@@ -104,6 +107,15 @@ impl AssetFileTrait for AssetFile {
 pub enum SongZipError {
     Fetch(reqwest_Error),
     Decode(ZipError),
+}
+
+impl std::fmt::Display for SongZipError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SongZipError::Fetch(e) => write!(f, "Fetch error: {}", e),
+            SongZipError::Decode(e) => write!(f, "Zip decode error: {}", e),
+        }
+    }
 }
 
 impl From<reqwest_Error> for SongZipError {

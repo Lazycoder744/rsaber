@@ -4,7 +4,13 @@ use std::num::NonZeroU32;
 
 use bytemuck::{Pod, Zeroable};
 use cgmath::Matrix4;
-use wgpu::{vertex_attr_array, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Device, Face, FrontFace, PolygonMode, PrimitiveState, PrimitiveTopology, Sampler, SamplerBindingType, ShaderStages, TextureView, TextureSampleType, TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexStepMode};
+use wgpu::{
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, BindingResource, BindingType, Device, Face, FrontFace, PolygonMode,
+    PrimitiveState, PrimitiveTopology, Sampler, SamplerBindingType, ShaderStages,
+    TextureSampleType, TextureView, TextureViewDimension, VertexAttribute, VertexBufferLayout,
+    VertexStepMode, vertex_attr_array,
+};
 
 use crate::util::IndexMap;
 
@@ -49,7 +55,10 @@ impl VertexShaderType {
     pub fn get_layout(&self) -> VertexBufferLayout<'_> {
         let (array_stride, attributes) = match self {
             VertexShaderType::Pos => (mem::size_of::<VertexPos>(), VERTEX_POS_ATTRS.as_slice()),
-            VertexShaderType::PosNormal => (mem::size_of::<VertexPosNormal>(), VERTEX_POSNORMAL_ATTRS.as_slice()),
+            VertexShaderType::PosNormal => (
+                mem::size_of::<VertexPosNormal>(),
+                VERTEX_POSNORMAL_ATTRS.as_slice(),
+            ),
         };
 
         VertexBufferLayout {
@@ -150,8 +159,7 @@ pub struct InstSimpleColor;
 
 impl InstSimpleColor {
     fn new() -> Self {
-        Self {
-        }
+        Self {}
     }
 
     fn get_bind_layouts(&self) -> BindLayouts {
@@ -212,8 +220,7 @@ pub struct InstPhongColor;
 
 impl InstPhongColor {
     fn new() -> Self {
-        Self {
-        }
+        Self {}
     }
 
     fn get_bind_layouts(&self) -> BindLayouts {
@@ -255,8 +262,7 @@ pub struct InstGrid;
 
 impl InstGrid {
     fn new() -> Self {
-        Self {
-        }
+        Self {}
     }
 
     fn get_bind_layouts(&self) -> BindLayouts {
@@ -315,8 +321,14 @@ impl InstWindow {
 
     fn get_bind_layouts(&self) -> BindLayouts {
         Box::from([
-            (BindLayoutType::Sampler, self.samplers.len().try_into().unwrap()), // 0
-            (BindLayoutType::Texture, self.textures.len().try_into().unwrap()), // 1
+            (
+                BindLayoutType::Sampler,
+                self.samplers.len().try_into().unwrap(),
+            ), // 0
+            (
+                BindLayoutType::Texture,
+                self.textures.len().try_into().unwrap(),
+            ), // 1
         ])
     }
 
@@ -336,7 +348,7 @@ impl InstWindow {
                     binding: 1, // See vertex/fragment shader->@binding().
                     resource: BindingResource::TextureViewArray(&texture_refs),
                 },
-            ]
+            ],
         })
     }
 }
@@ -388,8 +400,13 @@ impl InstShaderType {
 
     pub fn get_layout(&self) -> VertexBufferLayout<'_> {
         let (array_stride, attributes) = match self {
-            InstShaderType::SimpleColor => (InstShaderSize::SimpleColor, INST_SIMPLECOLOR_ATTRS.as_slice()),
-            InstShaderType::PhongColor => (InstShaderSize::PhongColor, INST_PHONGCOLOR_ATTRS.as_slice()),
+            InstShaderType::SimpleColor => (
+                InstShaderSize::SimpleColor,
+                INST_SIMPLECOLOR_ATTRS.as_slice(),
+            ),
+            InstShaderType::PhongColor => {
+                (InstShaderSize::PhongColor, INST_PHONGCOLOR_ATTRS.as_slice())
+            }
             InstShaderType::Grid => (InstShaderSize::Grid, INST_GRID_ATTRS.as_slice()),
             InstShaderType::Window => (InstShaderSize::Window, INST_WINDOW_ATTRS.as_slice()),
         };
@@ -402,7 +419,8 @@ impl InstShaderType {
     }
 
     pub fn create_impl(&self) -> InstShaderImplType {
-        match self { // TODO: Refactor match.
+        match self {
+            // TODO: Refactor match.
             InstShaderType::SimpleColor => InstShaderImplType::SimpleColor(InstSimpleColor::new()),
             InstShaderType::PhongColor => InstShaderImplType::PhongColor(InstPhongColor::new()),
             InstShaderType::Grid => InstShaderImplType::Grid(InstGrid::new()),
@@ -434,22 +452,22 @@ impl InstShaderImplType {
                     binding: i.try_into().unwrap(), // See vertex/fragment shader->@binding().
                     visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                     ty: match t {
-                        BindLayoutType::Sampler => BindingType::Sampler(SamplerBindingType::Filtering),
+                        BindLayoutType::Sampler => {
+                            BindingType::Sampler(SamplerBindingType::Filtering)
+                        }
                         BindLayoutType::Texture => BindingType::Texture {
-                            sample_type: TextureSampleType::Float {
-                                filterable: true,
-                            },
+                            sample_type: TextureSampleType::Float { filterable: true },
                             view_dimension: TextureViewDimension::D2,
                             multisampled: false,
-                        }
-                    },  
+                        },
+                    },
                     count: NonZeroU32::new(*count),
                 }
             }));
 
             Some(device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: None,
-                entries: &entries
+                entries: &entries,
             }))
         } else {
             None
@@ -460,16 +478,26 @@ impl InstShaderImplType {
         // Since BindGroupEntry->BindingResource contains references, we need to create
         // bind group here.
 
-        match self { // TODO: Refactor match.
-            InstShaderImplType::SimpleColor(inst_sh_impl) => inst_sh_impl.create_bind_group(device, bg_layout),
-            InstShaderImplType::PhongColor(inst_sh_impl) => inst_sh_impl.create_bind_group(device, bg_layout),
-            InstShaderImplType::Grid(inst_sh_impl) => inst_sh_impl.create_bind_group(device, bg_layout),
-            InstShaderImplType::Window(inst_sh_impl) => inst_sh_impl.create_bind_group(device, bg_layout),
+        match self {
+            // TODO: Refactor match.
+            InstShaderImplType::SimpleColor(inst_sh_impl) => {
+                inst_sh_impl.create_bind_group(device, bg_layout)
+            }
+            InstShaderImplType::PhongColor(inst_sh_impl) => {
+                inst_sh_impl.create_bind_group(device, bg_layout)
+            }
+            InstShaderImplType::Grid(inst_sh_impl) => {
+                inst_sh_impl.create_bind_group(device, bg_layout)
+            }
+            InstShaderImplType::Window(inst_sh_impl) => {
+                inst_sh_impl.create_bind_group(device, bg_layout)
+            }
         }
     }
 
     fn get_bind_layouts(&self) -> BindLayouts {
-        match self { // TODO: Refactor match.
+        match self {
+            // TODO: Refactor match.
             InstShaderImplType::SimpleColor(inst_sh_impl) => inst_sh_impl.get_bind_layouts(),
             InstShaderImplType::PhongColor(inst_sh_impl) => inst_sh_impl.get_bind_layouts(),
             InstShaderImplType::Grid(inst_sh_impl) => inst_sh_impl.get_bind_layouts(),

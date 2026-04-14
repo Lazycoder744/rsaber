@@ -7,7 +7,9 @@ pub const CHAR_STANDARD: &str = "Standard";
 // conversion from/to a primitive is needed.
 
 #[repr(i32)]
-#[derive(Clone, Copy, Deserialize, Eq, IntoPrimitive, Ord, PartialEq, PartialOrd, TryFromPrimitive)]
+#[derive(
+    Clone, Copy, Deserialize, Eq, IntoPrimitive, Ord, PartialEq, PartialOrd, TryFromPrimitive,
+)]
 pub enum SongDifficulty {
     Easy,
     Normal,

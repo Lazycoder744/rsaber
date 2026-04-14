@@ -1,11 +1,14 @@
 use std::cell::RefCell;
 
 use cgmath::{Matrix4, Vector3};
-use wgpu::{BufferUsages, Device};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
+use wgpu::{BufferUsages, Device};
 
 use crate::asset::AssetManagerRc;
-use crate::model::{Color, InstGridBuf, InstShaderImplType, InstShaderType, Mesh, Model, ModelFactory, ModelHandle, PrimitiveStateType, Submesh, VertexPos, VertexShaderType};
+use crate::model::{
+    Color, InstGridBuf, InstShaderImplType, InstShaderType, Mesh, Model, ModelFactory, ModelHandle,
+    PrimitiveStateType, Submesh, VertexPos, VertexShaderType,
+};
 use crate::ui::UIManagerRc;
 
 const RADIUS: f32 = 15.0; // TODO: make it adjustable via FloorParam?
@@ -16,10 +19,8 @@ pub struct FloorParam {
 
 impl FloorParam {
     pub fn new(color: &Color) -> Self {
-        Self {
-            color: *color,
-        }
-    }    
+        Self { color: *color }
+    }
 }
 
 impl ModelFactory for FloorParam {
@@ -33,22 +34,29 @@ impl ModelFactory for FloorParam {
         // We don't have .obj file for floor, calculate mesh.
 
         let vertexes = [
-            VertexPos { pos: [-RADIUS, -RADIUS, 0.0] },
-            VertexPos { pos: [RADIUS, -RADIUS, 0.0] },
-            VertexPos { pos: [-RADIUS, RADIUS, 0.0] },
-            VertexPos { pos: [RADIUS, RADIUS, 0.0] },
+            VertexPos {
+                pos: [-RADIUS, -RADIUS, 0.0],
+            },
+            VertexPos {
+                pos: [RADIUS, -RADIUS, 0.0],
+            },
+            VertexPos {
+                pos: [-RADIUS, RADIUS, 0.0],
+            },
+            VertexPos {
+                pos: [RADIUS, RADIUS, 0.0],
+            },
         ];
 
-        let indexes: [u16; 6] = [
+        let indexes: [u16; 6] = [0, 1, 2, 1, 3, 2];
+
+        let submesh = Submesh::new(
             0,
-            1,
-            2,
-            1,
-            3,
-            2,
-        ];
-
-        let submesh = Submesh::new(0, indexes.len() as u32, 0, PrimitiveStateType::TriangleList, InstShaderType::Grid); // 0
+            indexes.len() as u32,
+            0,
+            PrimitiveStateType::TriangleList,
+            InstShaderType::Grid,
+        ); // 0
 
         // Create buffers.
 
@@ -69,7 +77,13 @@ impl ModelFactory for FloorParam {
         Mesh::new(vertex_buf, index_buf, VertexShaderType::Pos, submeshes)
     }
 
-    fn create(self, handle: ModelHandle, _device: &Device, _inst_sh_impls: &mut [InstShaderImplType], _ui_manager: UIManagerRc) -> Self::Model {
+    fn create(
+        self,
+        handle: ModelHandle,
+        _device: &Device,
+        _inst_sh_impls: &mut [InstShaderImplType],
+        _ui_manager: UIManagerRc,
+    ) -> Self::Model {
         Floor::new(self, handle)
     }
 }

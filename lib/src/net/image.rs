@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
-use image::{ImageError as image_Error, ImageReader};
 use image::error::{DecodingError, ImageFormatHint};
+use image::{ImageError as image_Error, ImageReader};
 use reqwest::{Client, Error as reqwest_Error};
 use url::Url;
 
@@ -13,9 +13,7 @@ pub struct ImageRequest {
 
 impl ImageRequest {
     pub fn new(url: Url) -> Self {
-        Self {
-            url,
-        }
+        Self { url }
     }
 }
 
@@ -24,7 +22,8 @@ impl Request for ImageRequest {
     type Error = ImageError;
 
     async fn exec(self, client: Client) -> Result<Self::Response, Self::Error> {
-        let buf = client.get(self.url)
+        let buf = client
+            .get(self.url)
             .send()
             .await?
             .error_for_status()?
@@ -35,11 +34,18 @@ impl Request for ImageRequest {
 
         let reader = Cursor::new(buf);
         let image = ImageReader::new(reader)
-            .with_guessed_format().map_err(|_| image_Error::Decoding(DecodingError::from_format_hint(ImageFormatHint::Unknown)))? // TODO: Use Content-Type from response to avoid format guess?
+            .with_guessed_format()
+            .map_err(|_| {
+                image_Error::Decoding(DecodingError::from_format_hint(ImageFormatHint::Unknown))
+            })? // TODO: Use Content-Type from response to avoid format guess?
             .decode()?
             .into_rgba8();
 
-        Ok(ImageResponse::new(image.width(), image.height(), image.into_raw().into_boxed_slice()))
+        Ok(ImageResponse::new(
+            image.width(),
+            image.height(),
+            image.into_raw().into_boxed_slice(),
+        ))
     }
 }
 

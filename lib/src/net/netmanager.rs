@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use reqwest::Client;
@@ -19,7 +19,10 @@ pub trait Request {
     type Response: Send;
     type Error: Send;
 
-    fn exec(self, client: Client) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send; // TODO: Would be nice if we could use async fn.
+    fn exec(
+        self,
+        client: Client,
+    ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send; // TODO: Would be nice if we could use async fn.
 }
 
 type ExecFut = Pin<Box<dyn Future<Output = ()> + Send>>; // TODO: Use BoxFuture?
@@ -53,7 +56,11 @@ impl NetManager {
         // TODO: Call rustls_platform_verifier::android::init*.
 
         #[cfg(target_os = "android")]
-        let client = client.tls_certs_only(webpki_root_certs::TLS_SERVER_ROOT_CERTS.into_iter().map(|cert| Certificate::from_der(cert).expect("Failed to parse certificate")));
+        let client = client.tls_certs_only(
+            webpki_root_certs::TLS_SERVER_ROOT_CERTS
+                .into_iter()
+                .map(|cert| Certificate::from_der(cert).expect("Failed to parse certificate")),
+        );
 
         let client = client.build().expect("Unable to build client");
 
@@ -68,12 +75,13 @@ impl NetManager {
             queue_info_mutex: Mutex::new(queue_info),
         });
 
-        Self {
-            inner,
-        }
+        Self { inner }
     }
 
-    pub fn create_executor<T: NetManagerRunner + Clone + Send + 'static>(&self, runner: T) -> NetManagerExecutor<T> {
+    pub fn create_executor<T: NetManagerRunner + Clone + Send + 'static>(
+        &self,
+        runner: T,
+    ) -> NetManagerExecutor<T> {
         // Intented usage: the done_func parameter of NetManagerExecutor.submit() are supposed to be
         // executed on the same thread which called NetManagerExecutor.submit().
 
@@ -93,13 +101,17 @@ pub struct NetManagerExecutor<T> {
 
 impl<T: NetManagerRunner + Clone + Send + 'static> NetManagerExecutor<T> {
     fn new(inner: InnerRc, runner: T) -> Self {
-        Self {
-            inner,
-            runner,
-        }
+        Self { inner, runner }
     }
 
-    pub fn submit<R: Request + Send + 'static, D: FnOnce(Result<R::Response, R::Error>) + Send + 'static>(&self, req: R, done_func: D) -> Handle {
+    pub fn submit<
+        R: Request + Send + 'static,
+        D: FnOnce(Result<R::Response, R::Error>) + Send + 'static,
+    >(
+        &self,
+        req: R,
+        done_func: D,
+    ) -> Handle {
         // TODO: It would be nice if we could remove Send requirement on done_func, as
         // it would simplify the consumers as well.
         // Push into queue.
@@ -116,14 +128,16 @@ impl<T: NetManagerRunner + Clone + Send + 'static> NetManagerExecutor<T> {
 
                 || {
                     Box::pin(async move {
-                        if cancel_flag.load(Ordering::Relaxed) { // Cancel: before check.
+                        if cancel_flag.load(Ordering::Relaxed) {
+                            // Cancel: before check.
                             return;
                         }
 
                         let r = req.exec(client).await; // TODO: Drop future if cancelled during await.
 
                         runner.exec_done(move || {
-                            if !cancel_flag.load(Ordering::Relaxed) { // Cancel: after check.
+                            if !cancel_flag.load(Ordering::Relaxed) {
+                                // Cancel: after check.
                                 done_func(r);
                             }
                         });
@@ -148,7 +162,9 @@ impl<T: NetManagerRunner + Clone + Send + 'static> NetManagerExecutor<T> {
             queue_info.in_prog -= 1;
         }
 
-        if queue_info.in_prog < IN_PROG_MAX && let Some(func) = queue_info.queue.pop_front() {
+        if queue_info.in_prog < IN_PROG_MAX
+            && let Some(func) = queue_info.queue.pop_front()
+        {
             inner.async_runtime.spawn({
                 let inner = Arc::clone(&inner);
                 async move {
@@ -168,9 +184,7 @@ pub struct Handle {
 
 impl Handle {
     fn new(cancel_flag: CancelFlag) -> Self {
-        Self {
-            cancel_flag,
-        }
+        Self { cancel_flag }
     }
 }
 

@@ -26,6 +26,8 @@ export struct SearchWindowItem {
     download-url: string,
     difficulty-ints: [int],
     difficulty-strs: [string],
+    difficulty-njs: [float],
+    difficulty-offsets: [float],
     active: bool,
     preview-active: bool,
 }
@@ -63,9 +65,18 @@ component Song {
                     }
                 }
 
-                Text {
-                    text: root.item.name;
-                    wrap: word-wrap;
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: root.item.name;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: root.item.uploader-name;
+                        color: gray;
+                        font-size: Const.default-font-size * 0.8;
+                        wrap: word-wrap;
+                    }
                 }
             }
         }
@@ -93,9 +104,13 @@ export component SearchWindow inherits WindowBase {
     in-out property<int> difficulty-index;
     in property<string> detail-message;
     in property<string> message;
+    in-out property<int> page: 0;
+    out property<float> override-njs: 0.0;
+    out property<float> override-offset: 0.0;
 
     callback change-query();
     callback change-other();
+    callback change-page(int);
     callback refresh();
     callback test();
     callback select(int);
@@ -237,7 +252,44 @@ export component SearchWindow inherits WindowBase {
 
                                 clicked => {
                                     root.difficulty-index = index;
+                                    if (root.detail-item.difficulty-njs.length > index) {
+                                        root.override-njs = root.detail-item.difficulty-njs[index];
+                                    }
+                                    if (root.detail-item.difficulty-offsets.length > index) {
+                                        root.override-offset = root.detail-item.difficulty-offsets[index];
+                                    }
                                 }
+                            }
+                        }
+
+                        if (root.detail-item.difficulty-strs.length > 0) : HorizontalLayout {
+                            spacing: LocalConst.main-spacing;
+                            Text { text: "NJS:"; vertical-alignment: center; }
+                            Button {
+                                text: "-";
+                                clicked => { root.override-njs -= 0.5; }
+                            }
+                            Text {
+                                text: root.override-njs;
+                                vertical-alignment: center;
+                            }
+                            Button {
+                                text: "+";
+                                clicked => { root.override-njs += 0.5; }
+                            }
+
+                            Text { text: "Offset:"; vertical-alignment: center; }
+                            Button {
+                                text: "-";
+                                clicked => { root.override-offset -= 0.5; }
+                            }
+                            Text {
+                                text: root.override-offset;
+                                vertical-alignment: center;
+                            }
+                            Button {
+                                text: "+";
+                                clicked => { root.override-offset += 0.5; }
                             }
                         }
 
@@ -258,6 +310,24 @@ export component SearchWindow inherits WindowBase {
                             text: root.detail-message;
                             wrap: word-wrap;
                         }
+                    }
+                }
+
+                if (root.mode == SearchWindowMode.Item) : HorizontalLayout {
+                    alignment: center;
+                    spacing: LocalConst.main-spacing;
+                    Button {
+                        text: "<";
+                        enabled: root.page > 0;
+                        clicked => { root.change-page(-1); }
+                    }
+                    Text {
+                        text: "Page " + (root.page + 1);
+                        vertical-alignment: center;
+                    }
+                    Button {
+                        text: ">";
+                        clicked => { root.change-page(1); }
                     }
                 }
 

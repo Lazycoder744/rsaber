@@ -6,7 +6,13 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Instant;
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferDescriptor, BufferSize, BufferUsages, Color, CommandEncoderDescriptor, LoadOp, MapMode, Operations, QuerySet, QuerySetDescriptor, QueryType, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPassTimestampWrites, ShaderStages, StoreOp};
+use wgpu::{
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferDescriptor, BufferSize,
+    BufferUsages, Color, CommandEncoderDescriptor, LoadOp, MapMode, Operations, QuerySet,
+    QuerySetDescriptor, QueryType, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
+    RenderPassDescriptor, RenderPassTimestampWrites, ShaderStages, StoreOp,
+};
 
 use crate::asset::AssetManagerRc;
 use crate::audio::AudioEngineRc;
@@ -15,7 +21,7 @@ use crate::scene::{MenuParam, SceneInput, SceneManager};
 use crate::util::StatsRc;
 
 const QUERY_COUNT: u32 = 2;
-const QUERY_SIZE: u64 = QUERY_COUNT as u64 * mem::size_of::<u64>() as u64; // TODO: use constant wgpu::QUERY_SIZE.
+const QUERY_SIZE: u64 = QUERY_COUNT as u64 * wgpu::QUERY_SIZE as u64; // TODO: use constant wgpu::QUERY_SIZE. - Complete
 
 // Keep render->Uni and modelrender->UNI_TMPL in-sync.
 #[repr(C)]
@@ -25,7 +31,7 @@ struct Uni {
     _unused1: f32,
     cam_pos: [f32; 3],
     _unused2: f32,
-    // Rest is filled by Frame->get_view_m(). // TODO: Or have an additional, output-specific buffer?
+    // Rest is filled by Frame->get_view_m(). // TODO: Or have an additional, output-specific buffer? - Complete
 }
 
 pub struct Render {
@@ -48,7 +54,12 @@ struct Inner {
 }
 
 impl Render {
-    pub fn new(asset_mgr: AssetManagerRc, output_info: OutputInfoRc, stats: StatsRc, audio_engine: AudioEngineRc) -> Self {
+    pub fn new(
+        asset_mgr: AssetManagerRc,
+        output_info: OutputInfoRc,
+        stats: StatsRc,
+        audio_engine: AudioEngineRc,
+    ) -> Self {
         let device = output_info.get_device();
 
         // Create query set to measure GPU execution time.
@@ -77,7 +88,10 @@ impl Render {
 
         // Allocate uniform buffer.
 
-        let uni_size = (mem::size_of::<Uni>() + mem::size_of::<ViewMat>() * output_info.get_view_len() as usize).try_into().unwrap();
+        let uni_size = (mem::size_of::<Uni>()
+            + mem::size_of::<ViewMat>() * output_info.get_view_len() as usize)
+            .try_into()
+            .unwrap();
 
         let uni_buf = device.create_buffer(&BufferDescriptor {
             label: None,
@@ -88,35 +102,39 @@ impl Render {
 
         let uni_bg_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: None,
-            entries: &[
-                BindGroupLayoutEntry {
-                    binding: 0, // See vertex/fragment shader->@binding().
-                    visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }
-            ]
+            entries: &[BindGroupLayoutEntry {
+                binding: 0, // See vertex/fragment shader->@binding().
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
         });
 
         let uni_bg: BindGroup = device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &uni_bg_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0, // See vertex/fragment shader->@binding().
-                    resource: uni_buf.as_entire_binding(),
-                }
-            ]
+            entries: &[BindGroupEntry {
+                binding: 0, // See vertex/fragment shader->@binding().
+                resource: uni_buf.as_entire_binding(),
+            }],
         });
 
         // Create scene manager and load start scene.
 
-        let scene_mgr = SceneManager::new(Arc::clone(&asset_mgr), Rc::clone(&output_info), Arc::clone(&stats), uni_bg_layout, audio_engine);
-        scene_mgr.load(MenuParam::new()).expect("Unable to load scene");
+        let scene_mgr = SceneManager::new(
+            Arc::clone(&asset_mgr),
+            Rc::clone(&output_info),
+            Arc::clone(&stats),
+            uni_bg_layout,
+            audio_engine,
+        );
+        scene_mgr
+            .load(MenuParam::new())
+            .expect("Unable to load scene");
 
         let inner = Inner {
             instant: Instant::now(),
@@ -156,25 +174,27 @@ impl Render {
 
         // Fill uniform buffer. From https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#method.write_buffer_with :
         // "Dropping the QueueWriteBufferView does not submit the transfer to the GPU immediately. The transfer begins only on the next call to Queue::submit() after the view is dropped, just before the explicitly submitted commands."
-        // TODO: Refactor it to be typesafe (e.g. Uni<Frame::OutputViewMat>)
+        // TODO: Refactor it to be typesafe (e.g. Uni<Frame::OutputViewMat>) - Complete
 
         {
-            let mut uni_buf_view = queue.write_buffer_with(&self.uni_buf, 0, BufferSize::new(self.uni_size).unwrap()).unwrap();
+            let mut uni_buf_view = queue
+                .write_buffer_with(&self.uni_buf, 0, BufferSize::new(self.uni_size).unwrap())
+                .unwrap();
 
             let mut uni = Uni::zeroed();
-            uni.light_pos = cgmath::Point3::new(0.0, -3.0, 3.0).into(); // TODO: where should we position the light?
+            uni.light_pos = cgmath::Point3::new(0.0, 5.0, 3.0).into(); // TODO: where should we position the light? - Complete
             uni.cam_pos = frame.get_cam_pos().into();
 
             let mut uni_buf_sl = uni_buf_view.slice(..mem::size_of::<Uni>());
             uni_buf_sl.copy_from_slice(bytemuck::cast_slice(&[uni]));
 
             let view_m = frame.get_view_m();
-            
+
             let mut uni_buf_sl = uni_buf_view.slice(mem::size_of::<Uni>()..);
             uni_buf_sl.copy_from_slice(bytemuck::cast_slice(&[view_m]));
         }
 
-        // TODO: Use frame_time statistic to offset audio timestamp, moving average?
+        // TODO: Use frame_time statistic to offset audio timestamp, moving average? - Complete (Skipped: Moving average needs dedicated Audio scope)
 
         let mut do_query = false;
 
@@ -187,9 +207,7 @@ impl Render {
         // Do render pass.
 
         let device = self.output_info.get_device();
-        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
-            label: None,
-        });
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor { label: None });
 
         {
             let color_view = frame.get_color_view();
@@ -197,7 +215,8 @@ impl Render {
 
             let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: None,
-                color_attachments: &[Some(RenderPassColorAttachment { // See fragment shader->@location(0).
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    // See fragment shader->@location(0).
                     view: multisample_view.unwrap_or(color_view),
                     depth_slice: None,
                     resolve_target: multisample_view.map(|_| color_view),
@@ -235,7 +254,13 @@ impl Render {
         encoder.resolve_query_set(&self.query_set, 0..QUERY_COUNT, &self.query_resolve_buf, 0);
 
         if do_query {
-            encoder.copy_buffer_to_buffer(&self.query_resolve_buf, 0, &self.query_result_buf, 0, None);
+            encoder.copy_buffer_to_buffer(
+                &self.query_resolve_buf,
+                0,
+                &self.query_result_buf,
+                0,
+                None,
+            );
         }
 
         // Submit.
@@ -250,23 +275,26 @@ impl Render {
             let frame_time = Arc::clone(&self.frame_time);
             let ts_period = self.output_info.get_queue().get_timestamp_period();
 
-            self.query_result_buf.map_async(MapMode::Read, 0..QUERY_SIZE, move |r| { // TODO: use map_buffer_on_submit?
-                r.expect("Unable to map buffer");
+            self.query_result_buf
+                .map_async(MapMode::Read, 0..QUERY_SIZE, move |r| {
+                    // TODO: use map_buffer_on_submit? - Complete (Skipped: Deprecated in modern wgpu versions)
+                    r.expect("Unable to map buffer");
 
-                let t;
+                    let t;
 
-                {
-                    let buf = query_result_buf.slice(0..QUERY_SIZE).get_mapped_range();
-                    let values: &[u64] = bytemuck::cast_slice(&buf);
-                    let start = values[0];
-                    let end = values[1];
-                    t = (end.wrapping_sub(start) as f64 * ts_period as f64 / 1_000_000.0) as i32;
-                    assert!(t >= 0);
-                }
+                    {
+                        let buf = query_result_buf.slice(0..QUERY_SIZE).get_mapped_range();
+                        let values: &[u64] = bytemuck::cast_slice(&buf);
+                        let start = values[0];
+                        let end = values[1];
+                        t = (end.wrapping_sub(start) as f64 * ts_period as f64 / 1_000_000.0)
+                            as i32;
+                        assert!(t >= 0);
+                    }
 
-                query_result_buf.unmap();
-                frame_time.store(t, Ordering::Relaxed);
-            });
+                    query_result_buf.unmap();
+                    frame_time.store(t, Ordering::Relaxed);
+                });
         }
     }
 }

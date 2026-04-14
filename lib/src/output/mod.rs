@@ -5,7 +5,10 @@ use std::rc::Rc;
 use bytemuck::NoUninit;
 use cfg_if::cfg_if;
 use cgmath::Vector3;
-use wgpu::{Adapter, Device, Extent3d, Features, Limits, Queue, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView};
+use wgpu::{
+    Adapter, Device, Extent3d, Features, Limits, Queue, Texture, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureUsages, TextureView,
+};
 
 cfg_if! {
     if #[cfg(feature = "window")] {
@@ -44,7 +47,17 @@ pub struct OutputInfo {
 
 impl OutputInfo {
     #[allow(clippy::too_many_arguments)]
-    fn new<S: AsRef<str>>(device: &Device, queue: &Queue, color_format: TextureFormat, depth_format: TextureFormat, sample_count: u32, view_len: u32, view_index_def: S, view_index_val: S, diags: &[String]) -> Self {
+    fn new<S: AsRef<str>>(
+        device: &Device,
+        queue: &Queue,
+        color_format: TextureFormat,
+        depth_format: TextureFormat,
+        sample_count: u32,
+        view_len: u32,
+        view_index_def: S,
+        view_index_val: S,
+        diags: &[String],
+    ) -> Self {
         assert!(sample_count > 0);
         assert!(view_len > 0);
 
@@ -86,7 +99,11 @@ impl OutputInfo {
     }
 
     pub fn get_view_mask(&self) -> Option<NonZeroU32> {
-        NonZeroU32::new(if self.view_len == 1 { 0 } else { (1 << self.view_len) - 1 })
+        NonZeroU32::new(if self.view_len == 1 {
+            0
+        } else {
+            (1 << self.view_len) - 1
+        })
     }
 
     pub fn get_view_index_def(&self) -> &str {
@@ -114,12 +131,15 @@ pub trait Frame {
 }
 
 fn get_default_features() -> Features {
-    Features::default() | Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING | Features::TEXTURE_BINDING_ARRAY | Features::TIMESTAMP_QUERY
+    Features::default()
+        | Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+        | Features::TEXTURE_BINDING_ARRAY
+        | Features::TIMESTAMP_QUERY
 }
 
 fn get_default_limits() -> Limits {
     // These are arbitrary limits, change them if needed.
-    
+
     Limits {
         max_binding_array_elements_per_shader_stage: 16,
         max_binding_array_sampler_elements_per_shader_stage: 16,
@@ -128,13 +148,26 @@ fn get_default_limits() -> Limits {
 }
 
 fn get_sample_count(adapter: &Adapter, color_format: TextureFormat) -> u32 {
-    let mut sample_counts = adapter.get_texture_format_features(color_format).flags.supported_sample_counts();
+    let mut sample_counts = adapter
+        .get_texture_format_features(color_format)
+        .flags
+        .supported_sample_counts();
     sample_counts.sort_by_key(|count| Reverse(*count));
 
-    sample_counts.into_iter().find(|count| *count <= MAX_SAMPLE_COUNT).unwrap_or(1)
+    sample_counts
+        .into_iter()
+        .find(|count| *count <= MAX_SAMPLE_COUNT)
+        .unwrap_or(1)
 }
 
-fn create_texture(device: &Device, width: u32, height: u32, layers: u32, sample_count: u32, format: TextureFormat) -> Texture {
+fn create_texture(
+    device: &Device,
+    width: u32,
+    height: u32,
+    layers: u32,
+    sample_count: u32,
+    format: TextureFormat,
+) -> Texture {
     device.create_texture(&TextureDescriptor {
         label: None,
         size: Extent3d {

@@ -29,9 +29,7 @@ pub struct Sender<T> {
 
 impl<T> Sender<T> {
     fn new(inner_mutex: InnerMutexRc<T>) -> Self {
-        Self {
-            inner_mutex,
-        }
+        Self { inner_mutex }
     }
 
     pub fn send(&self, value: T) -> Result<(), ()> {
@@ -75,9 +73,7 @@ pub struct Receiver<T> {
 
 impl<T> Receiver<T> {
     fn new(inner_mutex: InnerMutexRc<T>) -> Self {
-        Self {
-            inner_mutex,
-        }
+        Self { inner_mutex }
     }
 
     pub fn try_recv(&self) -> Result<T, TryRecvError> {

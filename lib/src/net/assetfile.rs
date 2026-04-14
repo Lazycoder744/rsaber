@@ -4,7 +4,7 @@ use std::sync::Arc;
 use reqwest::{Client, Error as reqwest_Error};
 use url::Url;
 
-use crate::asset::{AssetError, AssetFileBox, AssetFileTrait, AssetResult};
+use crate::asset::{AssetError, AssetFileBox, AssetFileTrait, Result as AssetResult};
 use crate::net::Request;
 
 pub struct AssetFileRequest {
@@ -13,9 +13,7 @@ pub struct AssetFileRequest {
 
 impl AssetFileRequest {
     pub fn new(url: Url) -> Self {
-        Self {
-            url,
-        }
+        Self { url }
     }
 }
 
@@ -24,7 +22,8 @@ impl Request for AssetFileRequest {
     type Error = reqwest_Error;
 
     async fn exec(self, client: Client) -> Result<Self::Response, Self::Error> {
-        let buf = client.get(self.url)
+        let buf = client
+            .get(self.url)
             .send()
             .await?
             .error_for_status()?
@@ -48,11 +47,13 @@ impl AssetFile {
 }
 
 impl AssetFileTrait for AssetFile {
-    fn read(&self) -> AssetResult<Box<dyn Read + Send + Sync>> {
+    fn read(self: Box<Self>) -> AssetResult<Box<dyn Read + Send + Sync>> {
         Ok(Box::new(Cursor::new(Arc::clone(&self.buf))))
     }
 
-    fn read_str(&self) -> AssetResult<String> {
-        Ok(String::from(str::from_utf8(&self.buf).map_err(|_| AssetError::Decode)?))
+    fn read_str(self: Box<Self>) -> AssetResult<String> {
+        Ok(String::from(
+            str::from_utf8(&self.buf).map_err(|_| AssetError::Decode)?,
+        ))
     }
 }

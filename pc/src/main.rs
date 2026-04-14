@@ -10,17 +10,20 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use rsaber_lib::{APP_NAME, Main};
 use rsaber_lib::asset::EmbedAssetManager;
 use rsaber_lib::cgmath::{Deg, InnerSpace, Matrix3, Quaternion, Rotation3, Vector3};
 use rsaber_lib::output::{WindowBegin, WindowOutput};
 use rsaber_lib::scene::{SceneInput, ScenePose, ScenePoseScroll};
 use rsaber_lib::util::Stats;
 use rsaber_lib::wgpu::{InstanceDescriptor, SurfaceTarget};
+use rsaber_lib::{APP_NAME, Main};
 
 const COMMENT: &str = "You can use keys w-a-s-d to move, z-x to change elevation, r to reset view and arrow keys to rotate camera. Interaction with UI controls can be done with mouse.";
 
-const MIN_SIZE: PhysicalSize<u32> = PhysicalSize { width: 800, height: 600 };
+const MIN_SIZE: PhysicalSize<u32> = PhysicalSize {
+    width: 800,
+    height: 600,
+};
 const DEFAULT_POS: Vector3<f32> = Vector3::new(0.0, -2.5, 1.8); // TODO: configurable height
 const ROT_SPEED: f32 = 50.0; // [deg/s]
 const MOVE_SPEED: f32 = 5.0; // [m/s]
@@ -66,8 +69,18 @@ impl ApplicationHandler for App {
                 .with_title(APP_NAME)
                 .with_min_inner_size(MIN_SIZE);
 
-            let window = Arc::new(event_loop.create_window(window_attrs).expect("Unable to create window"));
-            let output = WindowOutput::new(InstanceDescriptor::new_with_display_handle(Box::new(event_loop.owned_display_handle())), SurfaceTarget::from(Arc::clone(&window))).block_on();
+            let window = Arc::new(
+                event_loop
+                    .create_window(window_attrs)
+                    .expect("Unable to create window"),
+            );
+            let output = WindowOutput::new(
+                InstanceDescriptor::new_with_display_handle(Box::new(
+                    event_loop.owned_display_handle(),
+                )),
+                SurfaceTarget::from(Arc::clone(&window)),
+            )
+            .block_on();
             let stats = Stats::new(COMMENT);
             let main = Main::new(self.asset_mgr.take().unwrap(), output.get_info(), stats);
 
@@ -91,7 +104,12 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
         let data = match &mut self.data {
             Some(data) => data,
             None => return,
@@ -123,7 +141,7 @@ impl ApplicationHandler for App {
                     audio_engine.start();
                     *active = true;
                 }
-            },
+            }
             WindowEvent::RedrawRequested => {
                 // Handle input.
 
@@ -133,7 +151,8 @@ impl ApplicationHandler for App {
                 let pitch = &mut data.pitch;
                 let yaw = &mut data.yaw;
 
-                if keys.contains(&KeyCode::KeyR) { // Reset
+                if keys.contains(&KeyCode::KeyR) {
+                    // Reset
                     *pos = DEFAULT_POS;
                     *pitch = 0.0;
                     *yaw = 0.0;
@@ -163,7 +182,9 @@ impl ApplicationHandler for App {
 
                     // Handle forward/backward.
 
-                    let value = MOVE_SPEED * ts_diff * (Quaternion::from_angle_z(Deg(*yaw)) * Vector3::unit_y());
+                    let value = MOVE_SPEED
+                        * ts_diff
+                        * (Quaternion::from_angle_z(Deg(*yaw)) * Vector3::unit_y());
 
                     if keys.contains(&KeyCode::KeyW) {
                         *pos += value;
@@ -206,7 +227,9 @@ impl ApplicationHandler for App {
                     data.window.request_redraw(); // TODO: do we need this refresh thingy? or we can run render in busy loop?
                 }
 
-                let dir = Quaternion::from_angle_z(Deg(*yaw)) * Quaternion::from_angle_x(Deg(*pitch)) * Vector3::unit_y();
+                let dir = Quaternion::from_angle_z(Deg(*yaw))
+                    * Quaternion::from_angle_x(Deg(*pitch))
+                    * Vector3::unit_y();
 
                 match output.begin(pos, &dir) {
                     WindowBegin::Skip => (),
@@ -238,7 +261,8 @@ impl ApplicationHandler for App {
                             // - Therefore, we need to apply a rotation to the mouse direction to
                             //   simulate saber direction.
 
-                            let rot_m = Matrix3::from_cols(unit_x, unit_y, unit_z) * Matrix3::from_angle_x(Deg(-90.0));
+                            let rot_m = Matrix3::from_cols(unit_x, unit_y, unit_z)
+                                * Matrix3::from_angle_x(Deg(-90.0));
                             let rot = Quaternion::from(rot_m);
 
                             pose = Pose::new(pos, &rot, *cursor_click, *cursor_scroll);
@@ -250,7 +274,7 @@ impl ApplicationHandler for App {
                         data.main.render(frame, &scene_input);
                     }
                 }
-            },
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 if !event.repeat {
                     let pressed = match event.state {
@@ -266,14 +290,14 @@ impl ApplicationHandler for App {
                         }
                     }
                 }
-            },
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 *cursor_pos = Some((position.x as u32, position.y as u32));
-            },
+            }
             WindowEvent::CursorLeft { .. } => {
                 *cursor_pos = None;
                 *cursor_click = false;
-            },
+            }
             WindowEvent::MouseInput { state, button, .. } => {
                 if matches!(button, MouseButton::Left) {
                     *cursor_click = match state {
@@ -281,18 +305,23 @@ impl ApplicationHandler for App {
                         ElementState::Released => false,
                     };
                 }
-            },
+            }
             WindowEvent::MouseWheel { delta, phase, .. } => {
                 if matches!(phase, TouchPhase::Moved) {
                     *cursor_scroll = match delta {
-                        MouseScrollDelta::LineDelta(scroll_x, scroll_y) => (SCROLL_LINE_SPEED * scroll_x, SCROLL_LINE_SPEED * scroll_y),
-                        MouseScrollDelta::PixelDelta(scroll) => (SCROLL_PIXEL_FACTOR * scroll.x as f32, SCROLL_PIXEL_FACTOR * scroll.y as f32),
+                        MouseScrollDelta::LineDelta(scroll_x, scroll_y) => {
+                            (SCROLL_LINE_SPEED * scroll_x, SCROLL_LINE_SPEED * scroll_y)
+                        }
+                        MouseScrollDelta::PixelDelta(scroll) => (
+                            SCROLL_PIXEL_FACTOR * scroll.x as f32,
+                            SCROLL_PIXEL_FACTOR * scroll.y as f32,
+                        ),
                     }
                 }
-            },
+            }
             WindowEvent::CloseRequested => {
                 event_loop.exit();
-            },
+            }
             _ => (),
         }
     }
@@ -306,7 +335,12 @@ struct Pose {
 }
 
 impl Pose {
-    fn new(pos: &Vector3<f32>, rot: &Quaternion<f32>, click: bool, scroll: ScenePoseScroll) -> Self {
+    fn new(
+        pos: &Vector3<f32>,
+        rot: &Quaternion<f32>,
+        click: bool,
+        scroll: ScenePoseScroll,
+    ) -> Self {
         Self {
             pos: *pos,
             rot: *rot,
@@ -347,5 +381,7 @@ fn main() {
     let mut app = App::new(asset_mgr);
 
     let event_loop = EventLoop::new().expect("Unable to create event loop");
-    event_loop.run_app(&mut app).expect("Unable to run event loop");
+    event_loop
+        .run_app(&mut app)
+        .expect("Unable to run event loop");
 }

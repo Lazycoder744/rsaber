@@ -12,6 +12,5 @@ fn main() {
 
     // Do XR loop.
 
-    while output.poll(&main) {
-    }
+    while output.poll(&main) {}
 }
